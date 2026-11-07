@@ -1,0 +1,2 @@
+bleak>=0.21
+Pillow>=10      # optional: only for `act1033 gif --fix`

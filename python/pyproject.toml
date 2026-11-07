@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "act1033-led"
+version = "0.1.0"
+description = "Control a BK-Light 64x16 LED panel over BLE from Python, or through an ESP32 bridge"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["bleak>=0.21"]
+
+[project.optional-dependencies]
+gif = ["Pillow>=10"]          # only for `act1033 gif --fix` (re-encoding arbitrary GIFs)
+dev = ["Pillow>=10", "pytest"]
+
+[project.scripts]
+act1033 = "act1033led.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["act1033led*"]
