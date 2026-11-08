@@ -81,15 +81,20 @@ A cron trigger (`* * * * *`, every minute) looks after every panel that has the 
 API from [API_GUIDE.md](API_GUIDE.md)) for the next departures of a stop and renders two lines of 5×7 text: the line number on the left, the remaining
 time on the right, one line per departure (the second tram goes to the second row). A failed transit call keeps the last picture.
 
-**Mode `seconds` (default)** - `13   3m 10s`. The panel plays a GIF by itself, so the countdown needs no upload every minute (every upload makes the panel flash for ~2 s):
-- One GIF has **50 frames of 10 s** (500 s). Frame *k* shows the next two departures as they will be *k × 10 s* later; when a tram has left, the next one moves up.
-- Frame 0 is the moment the picture is expected to appear on the panel (`MPK_LEAD_S`, 8 s after generation, covering the fast pickup and the BLE upload), aligned to 10 s so timetable rows count `3m 10s`, `3m 00s`, `2m 50s` ….
-- The GIF is **replaced every 5 minutes** (`MPK_REFRESH_S`) - well before its 500 s end, so it never loops back - or earlier when live data moved: a timetable row by more than 20 s,
-  a live vehicle estimate (which the API gives only to the minute) by more than 90 s, a different line first, or a tram that vanished.
-- Timetable rows are exact (HH:MM, Warsaw time). Live vehicles only have rounded minutes, so their seconds are an estimate.
+**Mode `seconds` (default)** - `13   3m 10s`, **computed from the timetable** (exact HH:MM, Warsaw time; the API is called with `mode=schedule`).
+Live GPS vehicles are deliberately not used here: the API gives them only as rounded minutes estimated from the straight-line distance, with no heading, so on a
+platform shared by both directions a tram that just left looks "1 min away" and a countdown to the second would be a guess. The panel plays a GIF by itself, so the
+countdown needs no upload every minute (every upload makes the panel flash for ~2 s):
+- One GIF has **50 frames of 10 s** (500 s). Frame *k* shows the next two departures as they will be *k × 10 s* later; when a tram has left, the next one moves up
+  (the second tram is always in the second row).
+- Frame 0 is the moment the picture is expected to appear on the panel (`MPK_LEAD_S`, 8 s after generation, covering the fast pickup and the BLE upload), aligned to 10 s so
+  rows count `3m 10s`, `3m 00s`, `2m 50s` ….
+- The GIF is **replaced every 5 minutes** (`MPK_REFRESH_S`) - well before its 500 s end, so it never loops back - or earlier when the timetable data changed
+  (a departure moved by more than 20 s, a different line first, a departure vanished).
 - An automatic replacement gives the ESP a short fast-poll window (`FRESH_WINDOW_S`, 20 s) so the new GIF reaches the panel within seconds.
 
-**Mode `minutes`** - the older static picture `13   12 min`, rewritten whenever the minutes change.
+**Mode `minutes`** - live vehicles + timetable (`mode=hybrid`) as a static picture `13   12 min`, rewritten whenever the minutes change. Use it when you want delays
+and vehicles that are really on their way; use `dir` (a terminus or stop that lies in your direction of travel) so vehicles going the other way are filtered out.
 
 | Request | Token | Result |
 |---|---|---|

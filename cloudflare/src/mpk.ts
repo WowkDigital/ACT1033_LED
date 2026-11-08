@@ -2,10 +2,12 @@
 // as the panel's image, so the panel runs on its own (no browser open). Data comes from the transit API in docs/API_GUIDE.md.
 //
 // Two modes:
-//  - "seconds" (default): a GIF that counts down in 10 s steps ("13   3m 10s", two rows = the next two departures).
+//  - "seconds" (default): a GIF that counts down in 10 s steps ("13   3m 10s", two rows = the next two departures), computed from
+//    the TIMETABLE (exact HH:MM). Live GPS data is not used here: it only has rounded minutes, no heading (vehicles that just passed
+//    or go the other way look "1 min away") and would turn a countdown to the second into a guess.
 //    The panel plays the GIF by itself, so the countdown runs smoothly without a new upload every minute (every upload makes the
-//    panel flash). One GIF has 50 frames (500 s) and is replaced every 5 minutes, or earlier when the live data moved noticeably.
-//  - "minutes": the old static picture ("13   12 min") that is rewritten whenever the minutes change.
+//    panel flash). One GIF has 50 frames (500 s) and is replaced every 5 minutes.
+//  - "minutes": live vehicles + timetable ("hybrid"), a static picture ("13   12 min") rewritten whenever the minutes change.
 
 import { bearer } from "./auth.ts";
 import { forbidden, getPanel, roleFor, storeImage, unauthorized, type Env, type PanelRow } from "./panels.ts";
@@ -79,10 +81,10 @@ interface RawDep {
   time?: string;
 }
 
-async function fetchRaw(env: Env, cfg: MpkConfig, limit: number): Promise<{ stop: string; list: RawDep[] }> {
+async function fetchRaw(env: Env, cfg: MpkConfig, limit: number, source: "schedule" | "hybrid"): Promise<{ stop: string; list: RawDep[] }> {
   const url = new URL("/departures", env.TRANSIT_URL || DEFAULT_TRANSIT_URL);
   url.searchParams.set("stop", cfg.stop);
-  url.searchParams.set("mode", "hybrid");
+  url.searchParams.set("mode", source);
   url.searchParams.set("limit", String(limit));
   if (cfg.lines) url.searchParams.set("lines", cfg.lines);
   if (cfg.dir) url.searchParams.set("dir", cfg.dir);
@@ -105,7 +107,7 @@ function warsawSecondsOfDay(ms: number): number {
 }
 
 /** Absolute departure times. Timetable rows have HH:MM (Warsaw time) -> exact; live vehicles only a rounded `min` -> approximate. */
-export function toDeps(list: RawDep[], nowMs: number): Dep[] {
+export function toDeps(list: RawDep[], nowMs: number, timetableOnly = false): Dep[] {
   const nowS = Math.floor(nowMs / 1000);
   const sod = warsawSecondsOfDay(nowMs);
   const out: Dep[] = [];
@@ -116,7 +118,7 @@ export function toDeps(list: RawDep[], nowMs: number): Dep[] {
       let delta = Number(m[1]) * 3600 + Number(m[2]) * 60 - sod;
       if (delta < -43200) delta += 86400; // after midnight
       out.push({ l: line, t: nowS + delta, x: true });
-    } else if (d.min !== undefined && d.min !== "") {
+    } else if (!timetableOnly && d.min !== undefined && d.min !== "") {
       const min = String(d.min).startsWith("<") ? 0.5 : Number(d.min);
       if (Number.isFinite(min)) out.push({ l: line, t: nowS + Math.round(min * 60), x: false });
     }
@@ -197,7 +199,7 @@ export async function refreshPanel(
 ): Promise<RefreshResult> {
   const nowS = Math.floor(nowMs / 1000);
   if (cfg.mode === "minutes") {
-    const { stop, list } = await fetchRaw(env, cfg, 2);
+    const { stop, list } = await fetchRaw(env, cfg, 2, "hybrid");
     const rows = list.slice(0, 2).map((d) => ({
       left: String(d.line ?? "").slice(0, 5),
       right: d.min !== undefined && d.min !== "" ? String(d.min) + " min" : String(d.time ?? ""),
@@ -208,8 +210,8 @@ export async function refreshPanel(
   }
 
   const s = settings(env);
-  const { stop, list } = await fetchRaw(env, cfg, 8);
-  const deps = toDeps(list, nowMs);
+  const { stop, list } = await fetchRaw(env, cfg, 8, "schedule");
+  const deps = toDeps(list, nowMs, true); // timetable rows only: a countdown to the second must not be built on rounded minutes
   const rowsNow = upcoming(deps, nowS).map((d) => ({ left: d.l, right: formatRemaining(d.t - nowS, s.step) }));
   const key = cfgKey(cfg);
   let state: State | null = null;

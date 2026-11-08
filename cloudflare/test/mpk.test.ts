@@ -22,7 +22,9 @@ globalThis.fetch = (async (input: RequestInfo | URL) => {
   if (u.origin !== "https://transit.test") return realFetch(input);
   requested.push(u.pathname + u.search);
   if (u.searchParams.get("stop") === "99999") return new Response('{"error":"unknown"}', { status: 404 });
-  return Response.json({ stop: "Budziszyńska", departures });
+  // like the real API: "schedule" returns timetable rows only, "hybrid" puts live vehicles (no `time`, rounded `min`) first
+  const rows = u.searchParams.get("mode") === "schedule" ? departures.filter((d) => d.time) : departures;
+  return Response.json({ stop: "Budziszyńska", departures: rows });
 }) as typeof fetch;
 
 const warsawHHMM = (ms: number) => {
@@ -79,6 +81,13 @@ test("timetable rows are exact (Warsaw time, midnight wrap); live rows are appro
   assert.deepEqual(d.map((x) => [x.l, x.t - nowS, x.x]), [["7", 30, false], ["23", 60, true], ["249", 180, false], ["13", 420, true]]);
 });
 
+test("timetable-only mode ignores rows without an exact time", () => {
+  const now = Date.UTC(2026, 10, 8, 10, 0, 0);
+  const raw = [{ line: "23", min: "1" }, { line: "13", time: "11:10", min: "70" }];
+  assert.deepEqual(toDeps(raw, now, true).map((d) => d.l), ["13"]);
+  assert.deepEqual(toDeps(raw, now).map((d) => d.l), ["23", "13"]); // the minutes mode still uses live rows
+});
+
 test("countdown GIF: 50 frames, 10 s per frame, small", () => {
   const nowS = Math.floor(Date.now() / 1000);
   const deps: Dep[] = [{ l: "13", t: nowS + 190, x: true }, { l: "23", t: nowS + 400, x: true }, { l: "134", t: nowS + 900, x: true }];
@@ -123,7 +132,7 @@ test("enabling the job (default mode) renders a 50-frame countdown immediately",
   assert.equal(body.stop_name, "Budziszyńska");
   assert.deepEqual(body.rows.map((r) => r.left), ["13", "23"]);
   assert.match(body.rows[0]!.right, /^[0-3]m \d0s$/); // e.g. "2m 50s": second tram goes to the second row
-  assert.ok(requested.at(-1)!.includes("limit=8"));
+  assert.ok(requested.at(-1)!.includes("limit=8") && requested.at(-1)!.includes("mode=schedule"), "the countdown is built from the timetable only");
   const img = await image();
   assert.equal(img.status, 200);
   assert.equal(gifFrames(img.body), 50);
@@ -150,17 +159,15 @@ test("poll hint: fast right after a regeneration, idle afterwards", async () => 
   assert.equal((await image()).poll, "30");
 });
 
-test("live-vehicle jitter is tolerated, a late vehicle regenerates", async () => {
-  await putMpk({ stop: "12020", mode: "seconds" });
-  departures = [{ line: "249", min: "3" }];
-  await putMpk({ stop: "12020" });
-  const first = (await image()).etag;
-  departures = [{ line: "249", min: "4" }]; // +60 s: within the 90 s tolerance for estimates
-  await tick();
-  assert.equal((await image()).etag, first);
-  departures = [{ line: "249", min: "6" }]; // +180 s
-  await tick();
-  assert.notEqual((await image()).etag, first);
+test("live vehicles never shorten the countdown (the reported bug: '1 min' for trams that just left)", async () => {
+  // what the API returns around a platform shared by both directions: live vehicles 100-500 m away, then the timetable
+  departures = [{ line: "23", min: "<1" }, { line: "13", min: "1" }, sched("23", 6), sched("13", 15)];
+  const r = await putMpk({ stop: "12020", lines: "13,23" });
+  const body = (await r.json()) as { rows: { left: string; right: string }[] };
+  assert.deepEqual(body.rows.map((x) => x.left), ["23", "13"]);
+  const minutes = body.rows.map((x) => Number(/^(\d+)m/.exec(x.right)?.[1] ?? 0));
+  assert.deepEqual(minutes, [5, 14]); // 6 and 15 minutes minus the seconds already elapsed, not "30s" / "1m 00s"
+  assert.ok(requested.at(-1)!.includes("mode=schedule"));
 });
 
 test("a transit error keeps the last picture", async () => {
@@ -177,6 +184,7 @@ test("minutes mode keeps the old static picture", async () => {
   const r = await putMpk({ stop: "12020", mode: "minutes" });
   const body = (await r.json()) as { rows: { left: string; right: string }[] };
   assert.deepEqual(body.rows, [{ left: "249", right: "3 min" }, { left: "13", right: "7 min" }]);
+  assert.ok(requested.at(-1)!.includes("mode=hybrid"), "minutes mode keeps live vehicles");
   const img = await image();
   assert.equal(gifFrames(img.body), 2);
   departures = [{ line: "249", min: "2" }, { line: "13", min: "6" }];
