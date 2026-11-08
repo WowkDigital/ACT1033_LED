@@ -81,6 +81,12 @@
         <label>Direction (optional) <input id="m-dir" placeholder="Stadion Olimpijski" autocomplete="off"></label>
         <label>Colour <input id="m-color" type="color" value="#ffb000"></label>
       </div>
+      <label>Display
+        <select id="m-mode">
+          <option value="seconds">Countdown with seconds (3m 10s, steps of 10 s)</option>
+          <option value="minutes">Minutes only (3 min)</option>
+        </select>
+      </label>
       <div class="row actions">
         <button id="m-stop-btn" type="button" class="secondary">Stop departures</button>
         <button id="m-start" type="button" class="primary">Start departures</button>

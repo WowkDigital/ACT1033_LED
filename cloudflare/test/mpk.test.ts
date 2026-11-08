@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import worker from "../src/index.ts";
-import { parseConfig, renderRows } from "../src/mpk.ts";
+import { formatRemaining, needsRegen, parseConfig, renderCountdown, renderRows, runAll, toDeps, type Dep } from "../src/mpk.ts";
 import { makeDb } from "./d1shim.ts";
 
 const ADMIN = "admin-secret";
@@ -13,7 +13,8 @@ const call = (path: string, init: RequestInit & { token?: string } = {}) => {
 };
 
 // --- fake transit API
-let departures: { line: string; min?: string; time?: string }[] = [{ line: "249", min: "3" }, { line: "13", min: "7" }];
+type Raw = { line: string; min?: string; time?: string };
+let departures: Raw[] = [];
 const requested: string[] = [];
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -24,88 +25,178 @@ globalThis.fetch = (async (input: RequestInfo | URL) => {
   return Response.json({ stop: "Budziszyńska", departures });
 }) as typeof fetch;
 
-let tok: { write_token: string; read_token: string };
-const getImage = async () => {
-  const r = await call("/panel/bus/image", { token: tok.read_token });
-  return { status: r.status, etag: r.headers.get("etag"), poll: r.headers.get("x-poll-after"), type: r.headers.get("content-type") };
+const warsawHHMM = (ms: number) => {
+  const p = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Warsaw", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(ms);
+  return p.find((x) => x.type === "hour")!.value + ":" + p.find((x) => x.type === "minute")!.value;
 };
-const scheduled = async () => {
-  const jobs: Promise<unknown>[] = [];
-  await worker.scheduled!({} as ScheduledController, env, { waitUntil: (p: Promise<unknown>) => jobs.push(p) } as unknown as ExecutionContext);
-  await Promise.all(jobs);
+/** timetable departure in `min` minutes from now */
+const sched = (line: string, min: number): Raw => ({ line, time: warsawHHMM(Date.now() + min * 60000), min: String(min) });
+const gifFrames = (b: Uint8Array) => {
+  let n = 0;
+  for (let i = 0; i < b.length - 1; i++) if (b[i] === 0x21 && b[i + 1] === 0xf9) n++;
+  return n;
+};
+const gifDelayCs = (b: Uint8Array) => {
+  for (let i = 0; i < b.length - 5; i++) if (b[i] === 0x21 && b[i + 1] === 0xf9) return b[i + 4]! | (b[i + 5]! << 8);
+  return -1;
 };
 
-test("config validation", () => {
-  assert.deepEqual(parseConfig({ stop: "12020", lines: "13, 23", dir: "Kowale" }), { stop: "12020", lines: "13,23", dir: "Kowale", color: "#ffb000" });
+let tok: { write_token: string; read_token: string };
+const image = async () => {
+  const r = await call("/panel/bus/image", { token: tok.read_token });
+  const body = r.status === 200 ? new Uint8Array(await r.arrayBuffer()) : new Uint8Array();
+  return { status: r.status, etag: r.headers.get("etag"), poll: r.headers.get("x-poll-after"), body };
+};
+const putMpk = (cfg: object) => call("/panel/bus/mpk", { method: "PUT", token: tok.write_token, body: JSON.stringify(cfg) });
+const tick = (nowMs = Date.now()) => runAll(env, nowMs);
+
+// ---------------------------------------------------------------- pure functions
+test("config validation; seconds is the default mode", () => {
+  assert.deepEqual(parseConfig({ stop: "12020", lines: "13, 23", dir: "Kowale" }), { stop: "12020", lines: "13,23", dir: "Kowale", color: "#ffb000", mode: "seconds" });
+  assert.equal(parseConfig({ stop: "1", mode: "minutes" }).mode, "minutes");
   assert.throws(() => parseConfig({}), /stop/);
   assert.throws(() => parseConfig({ stop: "12 020" }), /stop/);
   assert.throws(() => parseConfig({ stop: "1", lines: "13;rm" }), /lines/);
   assert.throws(() => parseConfig({ stop: "1", color: "nope" }), /colour/);
+  assert.throws(() => parseConfig({ stop: "1", mode: "hours" }), /mode/);
 });
 
-test("rows are drawn on two text lines (GIF, colours limited to text + background)", () => {
-  const gif = renderRows([{ left: "249", right: "3 min" }, { left: "13", right: "7 min" }], "#ffb000");
+test("countdown text: 10 s resolution, '3m 10s' style", () => {
+  assert.equal(formatRemaining(190), "3m 10s");
+  assert.equal(formatRemaining(180), "3m 00s");
+  assert.equal(formatRemaining(189), "3m 00s");
+  assert.equal(formatRemaining(60), "1m 00s");
+  assert.equal(formatRemaining(59), "50s");
+  assert.equal(formatRemaining(9), "0s");
+  assert.equal(formatRemaining(-5), "0s");
+  assert.equal(formatRemaining(125 * 60 + 40), "125m 40s");
+});
+
+test("timetable rows are exact (Warsaw time, midnight wrap); live rows are approximate", () => {
+  const now = Date.UTC(2026, 10, 8, 22, 58, 0); // 23:58:00 in Warsaw (CET)
+  const nowS = now / 1000;
+  const d = toDeps([{ line: "13", time: "00:05", min: "7" }, { line: "23", time: "23:59", min: "1" }, { line: "249", min: "3" }, { line: "7", min: "<1" }], now);
+  assert.deepEqual(d.map((x) => [x.l, x.t - nowS, x.x]), [["7", 30, false], ["23", 60, true], ["249", 180, false], ["13", 420, true]]);
+});
+
+test("countdown GIF: 50 frames, 10 s per frame, small", () => {
+  const nowS = Math.floor(Date.now() / 1000);
+  const deps: Dep[] = [{ l: "13", t: nowS + 190, x: true }, { l: "23", t: nowS + 400, x: true }, { l: "134", t: nowS + 900, x: true }];
+  const gif = renderCountdown(deps, "#ffb000", nowS, 50, 10);
   assert.equal(String.fromCharCode(...gif.subarray(0, 6)), "GIF89a");
-  assert.equal(gif[6], 64);
-  assert.equal(gif[8], 16);
-  assert.ok(renderRows([], "#ffb000").length > 20); // "NO DATA"
+  assert.equal(gifFrames(gif), 50);
+  assert.equal(gifDelayCs(gif), 1000); // 10 s
+  assert.ok(gif.length < 40 * 1024, "size " + gif.length);
+  assert.ok(renderRows([], "#ffb000").length > 20);
 });
 
-test("enabling the job renders and stores a picture immediately", async () => {
-  const r = await call("/admin/panels", { method: "POST", token: ADMIN, body: JSON.stringify({ id: "bus" }) });
-  tok = await r.json();
+test("regeneration rules", () => {
+  const now = 1_000_000;
+  const exact: Dep[] = [{ l: "13", t: now + 300, x: true }, { l: "23", t: now + 600, x: true }];
+  const state = { key: "k", genAt: now - 100, deps: exact };
+  assert.equal(needsRegen(null, "k", exact, now, 300), true, "no state");
+  assert.equal(needsRegen(state, "other", exact, now, 300), true, "config changed");
+  assert.equal(needsRegen(state, "k", exact, now, 300), false, "nothing changed");
+  assert.equal(needsRegen({ ...state, genAt: now - 301 }, "k", exact, now, 300), true, "older than the refresh interval");
+  assert.equal(needsRegen(state, "k", [{ l: "13", t: now + 310, x: true }, exact[1]!], now, 300), false, "timetable row within 20 s");
+  assert.equal(needsRegen(state, "k", [{ l: "13", t: now + 340, x: true }, exact[1]!], now, 300), true, "timetable row moved by 40 s");
+  const live = { ...state, deps: [{ l: "249", t: now + 120, x: false }] };
+  assert.equal(needsRegen(live, "k", [{ l: "249", t: now + 170, x: false }], now, 300), false, "live estimate jitter (50 s) is tolerated");
+  assert.equal(needsRegen(live, "k", [{ l: "249", t: now + 260, x: false }], now, 300), true, "live vehicle is 140 s later");
+  assert.equal(needsRegen(live, "k", [{ l: "13", t: now + 120, x: true }], now, 300), true, "different line first");
+  assert.equal(needsRegen(live, "k", [], now, 300), true, "tram vanished");
+});
+
+// ---------------------------------------------------------------- through the Worker
+test("enabling the job (default mode) renders a 50-frame countdown immediately", async () => {
+  tok = await (await call("/admin/panels", { method: "POST", token: ADMIN, body: JSON.stringify({ id: "bus" }) })).json();
+  departures = [sched("13", 3), sched("23", 7), sched("134", 12)];
   assert.equal((await call("/panel/bus/mpk")).status, 401);
   assert.equal((await call("/panel/bus/mpk", { method: "PUT", token: tok.read_token, body: JSON.stringify({ stop: "12020" }) })).status, 403);
-  assert.equal((await call("/panel/bus/mpk", { method: "PUT", token: tok.write_token, body: JSON.stringify({ stop: "99999" }) })).status, 400);
-  assert.equal(((await (await call("/panel/bus/mpk", { token: tok.write_token })).json()) as { enabled: boolean }).enabled, false); // nothing saved
-  const ok = await call("/panel/bus/mpk", { method: "PUT", token: tok.write_token, body: JSON.stringify({ stop: "12020", lines: "249,13", dir: "Leśnica" }) });
+  assert.equal((await putMpk({ stop: "99999" })).status, 400);
+  assert.equal(((await (await call("/panel/bus/mpk", { token: tok.write_token })).json()) as { enabled: boolean }).enabled, false);
+
+  const ok = await putMpk({ stop: "12020", lines: "13,23", dir: "Leśnica" });
   assert.equal(ok.status, 200);
-  const body = (await ok.json()) as { enabled: boolean; stop_name: string; rows: { left: string; right: string }[] };
-  assert.equal(body.enabled, true);
+  const body = (await ok.json()) as { enabled: boolean; config: { mode: string }; stop_name: string; rows: { left: string; right: string }[] };
+  assert.equal(body.config.mode, "seconds");
   assert.equal(body.stop_name, "Budziszyńska");
-  assert.deepEqual(body.rows, [{ left: "249", right: "3 min" }, { left: "13", right: "7 min" }]);
-  assert.ok(requested.at(-1)!.includes("stop=12020") && requested.at(-1)!.includes("lines=249%2C13") && requested.at(-1)!.includes("limit=2"));
-  const img = await getImage();
+  assert.deepEqual(body.rows.map((r) => r.left), ["13", "23"]);
+  assert.match(body.rows[0]!.right, /^[0-3]m \d0s$/); // e.g. "2m 50s": second tram goes to the second row
+  assert.ok(requested.at(-1)!.includes("limit=8"));
+  const img = await image();
   assert.equal(img.status, 200);
-  assert.equal(img.type, "image/gif");
-  assert.equal(img.poll, "30", "an automatic update must not trigger the fast burst polling");
+  assert.equal(gifFrames(img.body), 50);
+  assert.equal(img.poll, "3", "a fresh regeneration is picked up quickly");
 });
 
-test("cron: unchanged departures are not rewritten, changed ones are", async () => {
-  const before = (await getImage()).etag;
-  await scheduled();
-  assert.equal((await getImage()).etag, before);
-  departures = [{ line: "249", min: "2" }, { line: "13", time: "17:05" }];
-  await scheduled();
-  const after = await getImage();
+test("cron within the same GIF's lifetime does not replace it (no flashing every minute)", async () => {
+  const before = (await image()).etag;
+  for (const min of [1, 2, 3, 4]) await tick(Date.now() + min * 60000 - 60000 + 5000); // 5 s .. ~3 min later
+  assert.equal((await image()).etag, before);
+});
+
+test("cron replaces the GIF when it is older than the refresh interval", async () => {
+  const before = (await image()).etag;
+  await tick(Date.now() + 301_000);
+  const after = await image();
   assert.notEqual(after.etag, before);
-  assert.equal(after.poll, "30");
+  assert.equal(gifFrames(after.body), 50);
+});
+
+test("poll hint: fast right after a regeneration, idle afterwards", async () => {
+  assert.equal((await image()).poll, "3");
+  await env.DB.prepare("UPDATE panels SET fresh_at = ?1 WHERE id = 'bus'").bind(Math.floor(Date.now() / 1000) - 60).run();
+  assert.equal((await image()).poll, "30");
+});
+
+test("live-vehicle jitter is tolerated, a late vehicle regenerates", async () => {
+  await putMpk({ stop: "12020", mode: "seconds" });
+  departures = [{ line: "249", min: "3" }];
+  await putMpk({ stop: "12020" });
+  const first = (await image()).etag;
+  departures = [{ line: "249", min: "4" }]; // +60 s: within the 90 s tolerance for estimates
+  await tick();
+  assert.equal((await image()).etag, first);
+  departures = [{ line: "249", min: "6" }]; // +180 s
+  await tick();
+  assert.notEqual((await image()).etag, first);
 });
 
 test("a transit error keeps the last picture", async () => {
-  const before = (await getImage()).etag;
+  const before = (await image()).etag;
   const saved = globalThis.fetch;
   globalThis.fetch = (async () => new Response("boom", { status: 500 })) as typeof fetch;
-  await scheduled();
+  await tick(Date.now() + 400_000);
   globalThis.fetch = saved;
-  assert.equal((await getImage()).etag, before);
+  assert.equal((await image()).etag, before);
 });
 
-test("a manual upload switches the job off and starts burst polling; DELETE also disables", async () => {
+test("minutes mode keeps the old static picture", async () => {
+  departures = [{ line: "249", min: "3" }, { line: "13", min: "7" }];
+  const r = await putMpk({ stop: "12020", mode: "minutes" });
+  const body = (await r.json()) as { rows: { left: string; right: string }[] };
+  assert.deepEqual(body.rows, [{ left: "249", right: "3 min" }, { left: "13", right: "7 min" }]);
+  const img = await image();
+  assert.equal(gifFrames(img.body), 2);
+  departures = [{ line: "249", min: "2" }, { line: "13", min: "6" }];
+  await tick();
+  assert.notEqual((await image()).etag, img.etag, "minutes mode rewrites when the minutes change");
+});
+
+test("a manual upload switches the job off; DELETE also disables and keeps the configuration", async () => {
   const { render } = await import("../src/render.ts");
   const mine = render({ format: "gif", elements: [{ type: "text", text: "Mine" }] }).body;
   assert.equal((await call("/panel/bus", { method: "PUT", token: tok.write_token, body: mine })).status, 200);
   assert.equal(((await (await call("/panel/bus/mpk", { token: tok.write_token })).json()) as { enabled: boolean }).enabled, false);
-  const etag = (await getImage()).etag;
-  departures = [{ line: "1", min: "1" }];
-  await scheduled();
-  assert.equal((await getImage()).etag, etag, "cron must not overwrite a manual picture");
-  assert.equal((await getImage()).poll, "3");
-  // re-enable, then DELETE
-  assert.equal((await call("/panel/bus/mpk", { method: "PUT", token: tok.write_token, body: JSON.stringify({ stop: "12020" }) })).status, 200);
-  assert.notEqual((await getImage()).etag, etag);
+  const etag = (await image()).etag;
+  await tick(Date.now() + 400_000);
+  assert.equal((await image()).etag, etag, "cron must not overwrite a manual picture");
+  assert.equal((await image()).poll, "3");
+  assert.equal((await putMpk({ stop: "12020" })).status, 200);
+  assert.notEqual((await image()).etag, etag);
   assert.equal((await call("/panel/bus/mpk", { method: "DELETE", token: tok.write_token })).status, 200);
   const cfg = (await (await call("/panel/bus/mpk", { token: tok.write_token })).json()) as { enabled: boolean; config: { stop: string } };
   assert.equal(cfg.enabled, false);
-  assert.equal(cfg.config.stop, "12020"); // configuration is kept
+  assert.equal(cfg.config.stop, "12020");
 });

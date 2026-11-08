@@ -25,7 +25,8 @@ function fail(msg, out) {
 step("Looking for the D1 database '" + DB_NAME + "'");
 let id;
 const list = wrangler(["d1", "list", "--json"]);
-if (list.ok) {
+if (!list.ok) fail("could not list your D1 databases (network problem, or not logged in? run: npx wrangler login)", list.out);
+{
   try {
     const rows = JSON.parse(list.out.slice(list.out.indexOf("[")));
     id = rows.find((d) => d.name === DB_NAME)?.uuid;

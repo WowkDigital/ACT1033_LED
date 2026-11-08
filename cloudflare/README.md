@@ -44,7 +44,7 @@ restrict CORS to your control page.
 ## Development
 
 ```bash
-npm test                    # 20 tests, in-memory SQLite stands in for D1
+npm test                    # 27 tests, in-memory SQLite stands in for D1
 npm run check               # tsc --noEmit
 npm run dev                 # wrangler dev (uses wrangler.local.jsonc)
 python tools/gen_font.py    # regenerate src/font.ts after editing python/act1033led/font.py
@@ -58,4 +58,4 @@ python tools/gen_font.py    # regenerate src/font.ts after editing python/act103
 ## Free-plan limits (check the current Cloudflare docs)
 
 Workers: ~100k requests/day. D1: ~100k row writes and ~5M row reads per day. An ESP polling every 30 s uses ~2900 requests/day, and a
-`304` costs no D1 write. The cron trigger adds 1440 invocations/day; the departures job writes to D1 only when the picture changes (≤ 1440 writes/day). Uploads that do not change the picture are not written either.
+`304` costs no D1 write. The cron trigger adds 1440 invocations/day; the departures job writes to D1 only when it replaces the picture (the countdown GIF: about every 5 minutes, ≈ 290 writes/day). Uploads that do not change the picture are not written either.

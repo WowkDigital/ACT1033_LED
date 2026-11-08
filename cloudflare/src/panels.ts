@@ -15,6 +15,13 @@ export interface Env {
   BURST_WINDOW_S?: string;
   /** optional var: base URL of the public-transit API used by the departures job (see mpk.ts) */
   TRANSIT_URL?: string;
+  /** optional vars of the countdown mode (see mpk.ts): frames per GIF, seconds per frame, regenerate after N s, delivery lead in s */
+  MPK_FRAMES?: string;
+  MPK_STEP_S?: string;
+  MPK_REFRESH_S?: string;
+  MPK_LEAD_S?: string;
+  /** optional var: seconds of fast polling after an automatic regeneration (so the new GIF reaches the panel quickly) */
+  FRESH_WINDOW_S?: string;
 }
 
 export const MAX_IMAGE = 64 * 1024;
@@ -33,10 +40,12 @@ export interface PanelRow {
   manual_at: number | null;
   mpk: string | null;
   mpk_enabled: number;
+  mpk_state: string | null;
+  fresh_at: number | null;
 }
 
 const COLUMNS =
-  "id, name, write_hash, read_hash, content_type, etag, size, created_at, updated_at, manual_at, mpk, mpk_enabled";
+  "id, name, write_hash, read_hash, content_type, etag, size, created_at, updated_at, manual_at, mpk, mpk_enabled, mpk_state, fresh_at";
 
 export type Role = "admin" | "write" | "read" | null;
 
@@ -192,6 +201,7 @@ export async function storeImage(
   bytes: Uint8Array,
   type: string,
   manual: boolean,
+  fresh = false,
 ): Promise<{ changed: boolean; etag: string; size: number }> {
   const etag = `"${(await sha256hex(bytes)).slice(0, 16)}"`;
   const now = Math.floor(Date.now() / 1000);
@@ -200,20 +210,24 @@ export async function storeImage(
     return { changed: false, etag, size: bytes.length };
   }
   await env.DB.prepare(
-    "UPDATE panels SET image = ?1, content_type = ?2, etag = ?3, size = ?4, updated_at = ?5, manual_at = CASE WHEN ?6 = 1 THEN ?5 ELSE manual_at END, mpk_enabled = CASE WHEN ?6 = 1 THEN 0 ELSE mpk_enabled END WHERE id = ?7",
+    "UPDATE panels SET image = ?1, content_type = ?2, etag = ?3, size = ?4, updated_at = ?5, manual_at = CASE WHEN ?6 = 1 THEN ?5 ELSE manual_at END, mpk_enabled = CASE WHEN ?6 = 1 THEN 0 ELSE mpk_enabled END, fresh_at = CASE WHEN ?8 = 1 THEN ?5 ELSE fresh_at END WHERE id = ?7",
   )
-    .bind(bytes, type, etag, bytes.length, now, manual ? 1 : 0, row.id)
+    .bind(bytes, type, etag, bytes.length, now, manual ? 1 : 0, row.id, fresh ? 1 : 0)
     .run();
   return { changed: true, etag, size: bytes.length };
 }
 
 /** Seconds the ESP should wait before its next check: short right after a person's change (more edits are likely), long when idle. */
-export function pollAfter(env: Env, manualAt: number | null, now = Math.floor(Date.now() / 1000)): number {
+export function pollAfter(env: Env, manualAt: number | null, now = Math.floor(Date.now() / 1000), freshAt: number | null = null): number {
   const num = (v: string | undefined, d: number) => (v !== undefined && Number.isFinite(Number(v)) && Number(v) > 0 ? Math.floor(Number(v)) : d);
   const idle = num(env.POLL_IDLE_S, 30);
   const burst = num(env.POLL_BURST_S, 3);
   const window = num(env.BURST_WINDOW_S, 180);
-  return manualAt !== null && now - manualAt < window ? burst : idle;
+  const freshWindow = num(env.FRESH_WINDOW_S, 20);
+  // a person's change keeps the fast polling for a while; an automatic regeneration only for a few seconds
+  if (manualAt !== null && now - manualAt < window) return burst;
+  if (freshAt !== null && now - freshAt < freshWindow) return burst;
+  return idle;
 }
 
 export async function panelImage(request: Request, env: Env, id: string): Promise<Response> {
@@ -223,7 +237,7 @@ export async function panelImage(request: Request, env: Env, id: string): Promis
   const headers = {
     ETag: row.etag,
     "Cache-Control": "no-cache",
-    "X-Poll-After": String(pollAfter(env, row.manual_at)),
+    "X-Poll-After": String(pollAfter(env, row.manual_at, undefined, row.fresh_at)),
     "Access-Control-Expose-Headers": "ETag, X-Poll-After",
   };
   if (request.headers.get("If-None-Match") === row.etag) return new Response(null, { status: 304, headers });

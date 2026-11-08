@@ -77,19 +77,30 @@ policy lives in the Worker and can be tuned without re-flashing. Optional Worker
 
 ## Departures job (runs on the Worker, no browser needed)
 
-A cron trigger (`* * * * *`, every minute) refreshes every panel that has the job enabled: it asks the transit API
-(`TRANSIT_URL`, default the public API from [API_GUIDE.md](API_GUIDE.md)) for the next two departures, renders them as two lines of
-5×7 text (line number on the left, minutes on the right, amber on black) and stores the picture only if it changed. The ESP picks it up
-at its idle poll (≤ 30 s). A failed transit call keeps the last picture.
+A cron trigger (`* * * * *`, every minute) looks after every panel that has the job enabled. It asks the transit API (`TRANSIT_URL`, default the public
+API from [API_GUIDE.md](API_GUIDE.md)) for the next departures of a stop and renders two lines of 5×7 text: the line number on the left, the remaining
+time on the right, one line per departure (the second tram goes to the second row). A failed transit call keeps the last picture.
+
+**Mode `seconds` (default)** - `13   3m 10s`. The panel plays a GIF by itself, so the countdown needs no upload every minute (every upload makes the panel flash for ~2 s):
+- One GIF has **50 frames of 10 s** (500 s). Frame *k* shows the next two departures as they will be *k × 10 s* later; when a tram has left, the next one moves up.
+- Frame 0 is the moment the picture is expected to appear on the panel (`MPK_LEAD_S`, 8 s after generation, covering the fast pickup and the BLE upload), aligned to 10 s so timetable rows count `3m 10s`, `3m 00s`, `2m 50s` ….
+- The GIF is **replaced every 5 minutes** (`MPK_REFRESH_S`) - well before its 500 s end, so it never loops back - or earlier when live data moved: a timetable row by more than 20 s,
+  a live vehicle estimate (which the API gives only to the minute) by more than 90 s, a different line first, or a tram that vanished.
+- Timetable rows are exact (HH:MM, Warsaw time). Live vehicles only have rounded minutes, so their seconds are an estimate.
+- An automatic replacement gives the ESP a short fast-poll window (`FRESH_WINDOW_S`, 20 s) so the new GIF reaches the panel within seconds.
+
+**Mode `minutes`** - the older static picture `13   12 min`, rewritten whenever the minutes change.
 
 | Request | Token | Result |
 |---|---|---|
-| `PUT /panel/:id/mpk` `{"stop":"12020","lines":"13,23","dir":"Stadion Olimpijski","color":"#ffb000"}` | write / admin | validates, renders immediately, enables the job; answers with `stop_name` and `rows` |
+| `PUT /panel/:id/mpk` `{"stop":"12020","lines":"13,23","dir":"Stadion Olimpijski","color":"#ffb000","mode":"seconds"}` | write / admin | validates, renders immediately, enables the job; answers with `stop_name` and `rows` |
 | `GET /panel/:id/mpk` | any panel token | `{enabled, config}` |
 | `DELETE /panel/:id/mpk` | write / admin | disables the job (the configuration is kept) |
 
-`stop` is a stop code (letters and digits); `lines` and `dir` are optional filters. **A manual upload (`PUT /panel/:id`) switches the job off**
-so the person's picture stays; automatic updates never trigger the fast burst polling (`X-Poll-After` follows manual changes only).
+`stop` is a stop code (letters and digits); `lines` and `dir` are optional filters; `mode` is `seconds` (default) or `minutes`.
+Optional Worker variables: `MPK_FRAMES` (50), `MPK_STEP_S` (10), `MPK_REFRESH_S` (300), `MPK_LEAD_S` (8), `FRESH_WINDOW_S` (20).
+**A manual upload (`PUT /panel/:id`) switches the job off** so the person's picture stays; automatic updates never trigger the 3-minute burst polling
+(`X-Poll-After` follows manual changes, plus a 20 s window after an automatic replacement).
 
 ## Panel-specific behaviour built in
 

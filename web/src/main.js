@@ -252,6 +252,7 @@ async function mpkLoad() {
       $("m-lines").value = j.config.lines || "";
       $("m-dir").value = j.config.dir || "";
       $("m-color").value = j.config.color || "#ffb000";
+      $("m-mode").value = j.config.mode || "seconds";
     }
     say("m-status", j.enabled ? "Departures are running on the Worker (stop " + j.config.stop + ")" : "Departures are off", j.enabled ? "ok" : "");
   } catch {
@@ -266,11 +267,11 @@ async function mpkStart() {
     const res = await fetch(c.url + "/mpk", {
       method: "PUT",
       headers: { ...c.auth, "Content-Type": "application/json" },
-      body: JSON.stringify({ stop: $("m-stop").value, lines: $("m-lines").value, dir: $("m-dir").value, color: $("m-color").value }),
+      body: JSON.stringify({ stop: $("m-stop").value, lines: $("m-lines").value, dir: $("m-dir").value, color: $("m-color").value, mode: $("m-mode").value }),
     });
     if (!res.ok) return say("m-status", await explain(res), "err");
     const j = await res.json();
-    say("m-status", "Running. " + mpkSummary(j) + ". The ESP shows it within about 30 s and the Worker refreshes it every minute.", "ok");
+    say("m-status", "Running. " + mpkSummary(j) + ". The ESP picks it up within about 30 s; " + (j.config.mode === "seconds" ? "the panel counts down by itself and the Worker replaces the animation every 5 minutes." : "the Worker refreshes it every minute."), "ok");
     persist();
   } catch (e) {
     say("m-status", e instanceof TypeError ? "Cannot reach the Worker (check the URL; CORS or network)" : e.message, "err");
