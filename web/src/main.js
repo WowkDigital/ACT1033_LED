@@ -39,6 +39,13 @@ function persist() {
   $("panel").value = hash.get("panel") || saved.panel || "";
   $("token").value = saved.token || "";
   $("remember").checked = !!saved.token;
+  try {
+    const b = hash.get("brightness") || localStorage.getItem(KEY + "-brightness"); // not a secret: kept even without "Remember"
+    if (b) $("brightness").value = clamp(Number(b), 5, 100);
+  } catch {
+    /* storage unavailable - fine */
+  }
+  $("bright-val").textContent = $("brightness").value + "%";
 })();
 
 // ---------------------------------------------------------------- status helpers
@@ -192,7 +199,6 @@ async function refresh() {
   current = null;
   $("file-preview").hidden = tab !== "file";
   $("preview").hidden = tab === "file";
-  $("brightness").disabled = tab === "file"; // a ready-made file is sent unchanged
   try {
     if (tab === "file") {
       current = await buildFile();
@@ -356,7 +362,14 @@ for (const b of document.querySelectorAll(".tabs button")) {
   });
 }
 let debounce;
-$("brightness").addEventListener("input", () => ($("bright-val").textContent = $("brightness").value + "%"));
+$("brightness").addEventListener("input", () => {
+  $("bright-val").textContent = $("brightness").value + "%";
+  try {
+    localStorage.setItem(KEY + "-brightness", $("brightness").value);
+  } catch {
+    /* storage unavailable - fine */
+  }
+});
 for (const el of document.querySelectorAll(".pane input, .pane select, #brightness")) {
   el.addEventListener("input", () => {
     clearTimeout(debounce);
