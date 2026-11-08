@@ -50,6 +50,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .opts select,.opts input{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px;width:100%;height:36px}
 .opts input[type=range]{padding:0}
 .sw{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}.sw i{width:22px;height:22px;border-radius:50%;border:2px solid var(--line);cursor:pointer}
+.mpkrows{background:#000;color:#ffb000;font:700 20px/1.35 ui-monospace,Consolas,monospace;border-radius:8px;padding:10px 14px;margin-bottom:6px}.mpkrows div{display:flex;justify-content:space-between;min-height:1.35em}
 #ban{display:none;background:#fef3c7;color:#78350f;border-radius:10px;padding:10px 14px;font-size:.9rem}
 </style></head><body>
 <header><h1>LED Panel</h1><span class="pill" id="pill"><span class="dot"></span><span id="pt">connecting…</span></span></header>
@@ -121,6 +122,20 @@ button:disabled{opacity:.45;cursor:not-allowed}
  <div class="info">2×2 px cells (32×8 grid) are computed on the ESP and sent as PNG frames over a single BLE connection. Results (fps, confirmation latency) appear in the log at the top. Afterwards the panel may stay in its loading mode until you send a regular GIF.</div>
 </section>
 
+<section class="card"><h2>MPK departures</h2>
+ <div class="mpkrows" id="mrows"></div>
+ <div class="opts">
+  <label>Stop code<input id="ms" maxlength="12" value="12020"></label>
+  <label>Lines (comma-separated)<input id="ml" maxlength="40" value="13"></label>
+  <label>Direction (terminus or stop, optional)<input id="md" maxlength="40" value="Stadion Olimpijski"></label>
+  <label>Refresh every (s)<input type="number" id="mi" min="15" max="600" value="30"></label>
+  <label class="chk"><input type="checkbox" id="me">MPK mode on</label>
+ </div>
+ <div class="info" id="minfo"></div>
+ <div class="row"><button class="pri" id="msave">Save</button><button id="mnow">Refresh now</button></div>
+ <div class="info">The ESP asks the Wrocław transit worker for the next 2 departures and shows them on the panel, one per row (line on the left, minutes on the right). The panel is only updated when the departures change. Sending any other animation switches MPK mode off.</div>
+</section>
+
 <section class="card"><h2>Device</h2>
  <dl class="kv" id="kv"></dl>
  <div class="row"><button id="reboot">Restart ESP</button></div>
@@ -168,12 +183,24 @@ function render(s){
    ['LED panel',s.panel.addr],['BLE signal (last scan)',s.panel.rssi?s.panel.rssi+' dBm'+(s.panel.seen_s!=null?' ('+fmtUp(s.panel.seen_s)+' ago)':''):'—'],
    ['Jobs completed',s.jobs],['Uptime',fmtUp(s.uptime_s)],['Free memory',Math.round(s.heap/1024)+' KB'],['Firmware',s.fw]];
   $('#kv').innerHTML=kv.map(r=>`<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join('');
+  renderMpk(s.mpk);
   document.querySelectorAll('[data-demo]').forEach(b=>b.disabled=running);
   $('#bgo').disabled=running;
   $('#send').disabled=running||!file||file.bad;
   $('#tsend').disabled=running||!tgif||tgif.length>65536;
   $('#lsend').disabled=running||!lgif||lgif.length>65536;
   $('#ban').style.display='none';lastRun=running;
+}
+let mpkInit=false;
+function renderMpk(m){
+  if(!m)return;
+  if(!mpkInit){mpkInit=true;$('#ms').value=m.stop;$('#ml').value=m.lines;$('#md').value=m.dir;$('#mi').value=m.iv;$('#me').checked=m.en}
+  $('#mrows').innerHTML=m.rows.map(r=>`<div><span>${r[0]||'&nbsp;'}</span><span>${r[1]}</span></div>`).join('');
+  let t=m.en?'Mode <b>on</b>':'Mode <b>off</b>';
+  if(m.stop_name)t+=` · ${m.stop_name} (${m.stop})`;
+  if(m.age_s!=null)t+=` · updated ${fmtUp(m.age_s)} ago`;
+  if(m.err)t+=` <span class="e">— ${m.err}</span>`;
+  $('#minfo').innerHTML=t;
 }
 async function poll(){
   let delay=2500;
@@ -195,6 +222,8 @@ async function post(url,opt){
 document.querySelectorAll('[data-demo]').forEach(b=>b.onclick=()=>post('/demo?n='+b.dataset.demo));
 $('#bgo').onclick=()=>post('/bench?mode='+$('#bm').value+'&sec='+$('#bs').value+'&gap='+$('#bg').value);
 $('#bstop').onclick=()=>post('/stop');
+$('#msave').onclick=()=>post('/mpk',{method:'POST',body:new URLSearchParams({en:$('#me').checked?'1':'0',stop:$('#ms').value,lines:$('#ml').value,dir:$('#md').value,iv:$('#mi').value})});
+$('#mnow').onclick=()=>post('/mpk/now');
 $('#reboot').onclick=()=>{if(confirm('Restart the ESP?'))post('/reboot',{method:'POST'})};
 
 // --- custom GIF ---

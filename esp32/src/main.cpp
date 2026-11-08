@@ -2,7 +2,7 @@
 // - Wi-Fi: credentials stored in NVS; none/invalid -> setup portal (AP "ESP-Panel-setup", password "panel-setup", http://192.168.4.1)
 // - HTTP server (port 80): control page with a live log
 //     GET /  | GET /status?since=N | GET /demo?n=a|b | GET /demo.gif?n=a|b | POST /gif (multipart) |
-//     GET /bench | GET /stop | POST /reboot | GET /font.js
+//     GET /bench | GET /stop | POST /reboot | GET /font.js | POST /mpk (config) | GET /mpk/now
 // - USB serial: a | b | status | wifi <ssid> <password> | wifireset
 #include <Arduino.h>
 #include <ESPmDNS.h>
@@ -15,6 +15,7 @@
 #include "font_js.h"
 #include "gifs.h"
 #include "log.h"
+#include "mpk.h"
 #include "panel.h"
 #include "png.h"
 #include "web.h"
@@ -187,7 +188,9 @@ void setCountryEU() {
   esp_wifi_set_country(&c);
 }
 
+extern bool g_mpkJob;
 void queueJob(uint8_t* buf, size_t len, bool owned, const String& name) {
+  if (!g_mpkJob) mpkDisable();  // any manual job takes the panel over from MPK mode
   jobBuf = buf; jobLen = len; jobOwned = owned; jobName = name; jobPending = true;
   setPhase("scan", 0);
   plog("i", "Job '%s' queued (%u B)", name.c_str(), (unsigned)len);
@@ -205,6 +208,7 @@ String statusJson(uint32_t since) {
   s += ",\"err_step\":" + String(errStep);
   s += ",\"last\":{\"ok\":" + String(lastOk ? "true" : "false") + ",\"msg\":\"" + lastMsg + "\",\"ago_s\":" +
        String(lastResultAt ? (millis() - lastResultAt) / 1000 : 0) + "}";
+  s += ",\"mpk\":" + mpkJson();
   s += ",\"seq\":" + String(logSeq) + ",\"log\":[";
   uint32_t from = logSeq > 40 ? logSeq - 40 : 0;
   if (since > from) from = since;
@@ -254,6 +258,12 @@ void setupHttp() {
     queueJob(nullptr, 0, false, "stream test");
     sendJson(202, "{\"ok\":true}");
   });
+  server.on("/mpk", HTTP_POST, [] {
+    String err = mpkConfigure(server.arg("en") == "1", server.arg("stop"), server.arg("lines"), server.arg("dir"), server.arg("iv").toInt());
+    if (err.length()) return sendJson(400, "{\"error\":\"" + err + "\"}");
+    sendJson(200, "{\"ok\":true}");
+  });
+  server.on("/mpk/now", HTTP_GET, [] { mpkRefreshNow(); sendJson(200, "{\"ok\":true}"); });
   server.on("/stop", HTTP_GET, [] { g_stopReq = true; sendJson(200, "{\"ok\":true}"); });
   server.on("/reboot", HTTP_POST, [] {
     sendJson(200, "{\"ok\":true}");
@@ -374,6 +384,7 @@ void setup() {
   delay(1500);
   Serial.println("\n=== ESP32-C3 ACT1033_LED ===");
   panel.begin(PANEL_ADDR);
+  mpkBegin();
   if (connectWifi()) {
     Serial.printf("Wi-Fi OK, IP %s\n", WiFi.localIP().toString().c_str());
     if (MDNS.begin(HOSTNAME)) { MDNS.addService("http", "tcp", 80); Serial.println("http://panel.local"); }
@@ -387,6 +398,7 @@ void setup() {
 void loop() {
   server.handleClient();
   handleSerial();
+  mpkLoop();
   if (jobPending) {
     jobPending = false;
     jobRunning = true;
