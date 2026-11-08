@@ -2,8 +2,8 @@
 
 All Cloudflare code for ACT1033_LED lives here (Workers, config, tooling).
 
-Planned role: the Worker renders frames (text, fonts, GTFS, animations) into the
-panel's native frame format; the ESP32 only fetches them and relays over BLE.
+The Worker is a universal renderer: it takes a scene (text, shapes, animations) and returns a finished
+PNG/GIF for the 64x16 panel. See [docs/RENDER_API.md](../docs/RENDER_API.md).
 
 ```
 npm install
