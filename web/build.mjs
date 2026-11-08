@@ -6,6 +6,7 @@ import { copyFileSync, mkdirSync } from "node:fs";
 
 mkdirSync("dist", { recursive: true });
 for (const f of ["index.html", "style.css"]) copyFileSync(f, "dist/" + f);
+copyFileSync("node_modules/leaflet/dist/leaflet.css", "dist/leaflet.css"); // map styles (the map code itself is a lazily loaded chunk)
 mkdirSync("dist/admin", { recursive: true });
 copyFileSync("admin/index.html", "dist/admin/index.html"); // served at /ACT1033_LED/admin/
 
@@ -13,6 +14,7 @@ const options = {
   entryPoints: { app: "src/main.js", admin: "src/admin.js" },
   bundle: true,
   format: "esm",
+  splitting: true, // the Leaflet map is a dynamic import() and becomes its own chunk
   target: "es2022",
   minify: true,
   sourcemap: false,

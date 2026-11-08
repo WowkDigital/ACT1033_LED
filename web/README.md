@@ -6,7 +6,7 @@ scrolling/blinking, Game of Life, or any GIF/PNG file), shown in a live preview,
 The ESP32 then downloads it at its next check. The **Departures** tab instead sets up an autonomous job that runs on the Worker
 (next public-transit departures for a stop, refreshed every minute) with no browser open.
 
-- No third-party scripts and no tracking. The token is sent only to the Worker URL you typed. "Remember on this device"
+- No third-party scripts and no tracking. The only third-party request is the map tiles (OpenStreetMap) in the **Departures** tab, and only once you pick a stop; the Leaflet library itself is bundled. The token is sent only to the Worker URL you typed. "Remember on this device"
   stores it in this browser's `localStorage`; leave it unticked on shared computers.
 - You can pre-fill the non-secret fields with a link: `https://<you>.github.io/ACT1033_LED/#worker=https://<your-worker>&panel=kitchen`.
 - The renderer is the **same code as the Worker's** (`../cloudflare/src`), bundled by esbuild, so previews match what the Worker would produce.
@@ -19,6 +19,10 @@ The page has four sections: **Send** (live preview + Text / Game of Life / Blobs
 is checking in. **Debug** shows the ESP's last check-in and poll interval, the stored image, the Worker's last 200 events (uploads,
 image downloads by the ESP, rejected tokens), the requests this page sent, and a "Copy report" button (no tokens in it). The data comes
 from `GET /panel/:id/debug`, so the Worker needs migration `0005_debug.sql` (`npm run migrate` in `cloudflare/`).
+
+The **Departures** tab picks a stop from the transit API: search by name, choose a pole (the map shows where each pole is; click a marker to switch),
+then tick lines and choose a direction from what actually runs there. A preview shows the next timetable departures for the chosen filters, and the
+Worker warns when they match nothing (that is what used to show as `NO DATA`).
 
 ## Admin page
 

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ACT1033 LED panel</title>
+<link rel="stylesheet" href="leaflet.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -119,17 +120,34 @@
     <section class="card">
       <h2>Public-transit departures</h2>
       <p class="hint">The Worker refreshes the next departures every minute, so the panel keeps running on its own. Sending any other picture to this panel switches this off.</p>
-      <label>Transit API <input id="m-api" type="url" value="https://wroclaw-transit.wowk-digital.workers.dev" autocomplete="off" spellcheck="false"></label>
-      <label>Find a stop <input id="m-q" placeholder="e.g. Budziszyńska" autocomplete="off"></label>
-      <label>Results <select id="m-results" size="1"><option value="">(type at least 2 letters)</option></select></label>
       <div class="row">
-        <label>Stop code <input id="m-stop" placeholder="12020" autocomplete="off"></label>
-        <label>Lines (optional) <input id="m-lines" placeholder="13,23" autocomplete="off"></label>
+        <label>Find a stop <input id="m-q" placeholder="e.g. Budziszyńska" autocomplete="off"></label>
+        <label>Results <select id="m-results" size="1"><option value="">(type at least 2 letters)</option></select></label>
+      </div>
+      <p class="hint">A stop has up to four poles: two directions, each with a tram and a bus pole. Pick the stop by name, then choose the direction and the transport. The map shows where the poles are (click a badge to choose it).</p>
+      <p id="m-stop-info" class="status" role="status"></p>
+      <div id="m-map" class="map" hidden aria-label="Map of the stop"></div>
+
+      <div id="m-pick" hidden>
+        <p class="lbl">Direction</p>
+        <div id="m-sides" class="sides"></div>
+        <p class="lbl">Transport <span class="hint">(none ticked = everything)</span></p>
+        <div id="m-type-chips" class="chips"></div>
+        <p class="lbl">Lines</p>
+        <div id="m-line-chips" class="chips"></div>
+        <input id="m-lines" type="hidden">
+        <label>Terminus (optional)
+          <select id="m-dir"><option value="">Any terminus</option></select>
+        </label>
+        <div id="m-preview" class="preview" hidden></div>
       </div>
       <div class="row">
-        <label>Direction (optional) <input id="m-dir" placeholder="Stadion Olimpijski" autocomplete="off"></label>
         <label>Colour <input id="m-color" type="color" value="#ffb000"></label>
       </div>
+      <details class="adv"><summary>Advanced</summary>
+        <label>Stop code (pole used for the timetable) <input id="m-stop" placeholder="12020" autocomplete="off"></label>
+        <label>Transit API <input id="m-api" type="url" value="https://wroclaw-transit.wowk-digital.workers.dev" autocomplete="off" spellcheck="false"></label>
+      </details>
       <label>Display
         <select id="m-mode">
           <option value="seconds">Countdown with seconds from the timetable (3m 10s, steps of 10 s)</option>

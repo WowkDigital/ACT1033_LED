@@ -274,7 +274,8 @@ export async function mpkRoute(request: Request, env: Env, id: string): Promise<
     const cfg = parseConfig(body);
     const r = await refreshPanel(env, row, cfg, true); // fails fast on an unknown stop; nothing is saved then
     await env.DB.prepare("UPDATE panels SET mpk = ?1, mpk_enabled = 1 WHERE id = ?2").bind(JSON.stringify(cfg), id).run();
-    return Response.json({ ok: true, enabled: true, config: cfg, stop_name: r.stop, rows: r.rows, changed: r.changed });
+    const warning = r.rows.length ? undefined : "no timetable departures match this stop, lines and direction right now, so the panel shows NO DATA. Check the lines and direction.";
+    return Response.json({ ok: true, enabled: true, config: cfg, stop_name: r.stop, rows: r.rows, changed: r.changed, warning });
   }
   throw new RenderError("use GET, PUT or DELETE", 405);
 }

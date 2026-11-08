@@ -5,6 +5,7 @@ import { encodeGif } from "../../cloudflare/src/encode.ts";
 import { H, W, lifeFrames } from "./life.js";
 import { PALETTES } from "./blobs.js";
 import { blobFrames } from "./blobs-render.js";
+import { initDepartures, loadStop } from "./departures.js";
 import { api, clearLog, setLogListener } from "./api.js";
 import { buildReport, chipFor, renderDebug, renderError, renderFilters, renderLog } from "./debug.js";
 
@@ -269,25 +270,6 @@ async function send() {
 }
 
 // ---------------------------------------------------------------- departures job (runs in the Worker, see cloudflare/src/mpk.ts)
-let searchTimer;
-async function searchStops() {
-  const q = $("m-q").value.trim();
-  const sel = $("m-results");
-  if (q.length < 2) return;
-  try {
-    const res = await fetch($("m-api").value.trim().replace(/\/+$/, "") + "/search?q=" + encodeURIComponent(q));
-    const list = await res.json();
-    sel.innerHTML = "";
-    if (!Array.isArray(list) || !list.length) sel.add(new Option("No stops found", ""));
-    else {
-      sel.add(new Option("Choose a stop (" + list.length + ")", ""));
-      for (const s of list.slice(0, 30)) sel.add(new Option(s.name + " · " + s.stop_code, s.stop_code));
-    }
-  } catch {
-    say("m-status", "Cannot reach the transit API", "err");
-  }
-}
-
 function mpkSummary(j) {
   const rows = (j.rows || []).map((r) => r.left + " " + r.right).join(" · ") || "no departures right now";
   return (j.stop_name ? j.stop_name + ": " : "") + rows;
@@ -301,8 +283,7 @@ async function mpkLoad() {
     const j = await res.json();
     if (j.config) {
       $("m-stop").value = j.config.stop || "";
-      $("m-lines").value = j.config.lines || "";
-      $("m-dir").value = j.config.dir || "";
+      loadStop(j.config.stop, { lines: j.config.lines || "", dir: j.config.dir || "" });
       $("m-color").value = j.config.color || "#ffb000";
       $("m-mode").value = j.config.mode || "seconds";
     }
@@ -323,6 +304,7 @@ async function mpkStart() {
     });
     if (!res.ok) return say("m-status", await explain(res), "err");
     const j = await res.json();
+    if (j.warning) return say("m-status", "Saved, but: " + j.warning, "err");
     say("m-status", "Running. " + mpkSummary(j) + ". The ESP picks it up within about 30 s; " + (j.config.mode === "seconds" ? "the panel counts down by itself and the Worker replaces the animation every 5 minutes." : "the Worker refreshes it every minute."), "ok");
     persist();
   } catch (e) {
@@ -341,13 +323,7 @@ async function mpkStop() {
   }
 }
 
-$("m-q").addEventListener("input", () => {
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(searchStops, 300);
-});
-$("m-results").addEventListener("change", () => {
-  if ($("m-results").value) $("m-stop").value = $("m-results").value;
-});
+initDepartures();
 $("m-start").addEventListener("click", mpkStart);
 $("m-stop-btn").addEventListener("click", mpkStop);
 

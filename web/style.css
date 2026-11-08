@@ -31,7 +31,7 @@ h2 { font-size: 16px; font-weight: 500; margin: 0 0 12px; }
 section { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
 label { display: block; font-size: 14px; color: var(--muted); margin-bottom: 12px; }
 label.check { display: flex; align-items: center; gap: 8px; margin: 0; }
-input:not([type=checkbox]):not([type=range]):not([type=color]), select {
+input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]):not([type=hidden]), select {
   display: block; width: 100%; margin-top: 4px; padding: 8px 10px; font: inherit; color: var(--text);
   background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
 }
@@ -109,3 +109,28 @@ td.empty { color: var(--muted); text-align: center; padding: 16px; }
   .preview-card { top: 100px; }
   .nav button { flex: 1; padding: 10px 4px; }
 }
+
+/* ---------------------------------------------------------------- departures picker */
+.map { height: 260px; border: 1px solid var(--border); border-radius: 8px; margin: 0 0 12px; z-index: 0; }
+.lbl { margin: 0 0 6px; font-size: 14px; color: var(--muted); }
+.preview { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin: 0 0 12px; font-size: 13px; }
+.preview.warn { color: var(--err); border-color: var(--err); }
+details.adv { margin: 0 0 12px; font-size: 14px; color: var(--muted); }
+details.adv summary { cursor: pointer; margin-bottom: 8px; }
+.chip input { margin: 0; }
+
+/* stop picker: direction cards, icons, map badges */
+.sides { display: grid; gap: 8px; margin: 0 0 12px; }
+.side { display: flex; gap: 10px; align-items: flex-start; margin: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); cursor: pointer; }
+.side.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.side input { margin-top: 4px; }
+.ico, .ico-wrap .ico { vertical-align: -3px; }
+.ico-wrap { display: inline-flex; gap: 2px; margin-right: 4px; }
+.mb-icon { background: none; border: 0; }
+.mb { position: absolute; left: 0; display: flex; gap: 4px; transform: translateX(-50%); white-space: nowrap; }
+.mb.above { bottom: 10px; }
+.mb.below { top: 10px; }
+.mb-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; font: 600 12px/1 system-ui, sans-serif; color: #222; background: #fff; border: 2px solid #666; border-radius: 999px; box-shadow: 0 1px 4px rgba(0,0,0,.35); cursor: pointer; }
+.mb-badge .ico { width: 14px; height: 14px; vertical-align: 0; }
+.mb.on .mb-badge { border-color: var(--accent); background: var(--accent); color: var(--accent-text); }
+.mb-badge:hover { transform: scale(1.06); }
