@@ -20,6 +20,7 @@ import {
   tokenIsValid,
   type Env,
 } from "./panels.ts";
+import { mpkRoute, runAll } from "./mpk.ts";
 import { render } from "./render.ts";
 import { RenderError, type Element, type Spec } from "./types.ts";
 
@@ -42,6 +43,7 @@ const USAGE = {
     "PUT /panel/:id": "upload GIF/PNG (write token)",
     "GET /panel/:id/image": "download the current image, supports If-None-Match (read token)",
     "GET /panel/:id": "metadata",
+    "GET|PUT|DELETE /panel/:id/mpk": "departures job: show the next departures from a stop, refreshed every minute by a cron trigger",
     "POST|GET /admin/panels": "create / list panels (ADMIN_TOKEN)",
     "DELETE /admin/panels/:id, POST /admin/panels/:id/rotate": "delete / rotate tokens (ADMIN_TOKEN)",
     "GET /health": "liveness probe",
@@ -119,9 +121,10 @@ async function handle(request: Request, env: Env): Promise<Response> {
     return adminDelete(request, env, m[1]!);
   }
 
-  m = /^\/panel\/([^/]+)(\/image)?$/.exec(path);
+  m = /^\/panel\/([^/]+)(\/image|\/mpk)?$/.exec(path);
   if (m) {
     const id = m[1]!;
+    if (m[2] === "/mpk") return mpkRoute(request, env, id);
     if (m[2]) {
       if (method !== "GET") throw new RenderError("use GET", 405);
       return panelImage(request, env, id);
@@ -151,5 +154,8 @@ export default {
     const out = new Response(res.body, res);
     for (const [k, v] of Object.entries(cors)) out.headers.set(k, v);
     return out;
+  },
+  async scheduled(_controller, env, ctx): Promise<void> {
+    ctx.waitUntil(runAll(env));
   },
 } satisfies ExportedHandler<Env>;

@@ -31,6 +31,7 @@
       <button type="button" role="tab" data-tab="text" aria-selected="true">Text</button>
       <button type="button" role="tab" data-tab="life" aria-selected="false">Game of Life</button>
       <button type="button" role="tab" data-tab="file" aria-selected="false">GIF / PNG file</button>
+      <button type="button" role="tab" data-tab="mpk" aria-selected="false">Departures</button>
     </div>
 
     <div id="tab-text" class="pane">
@@ -67,13 +68,33 @@
       </div>
     </div>
 
+    <div id="tab-mpk" class="pane" hidden>
+      <p class="hint">The Worker refreshes the next departures every minute, so the panel keeps running on its own. Sending any other picture to this panel switches this off.</p>
+      <label>Transit API <input id="m-api" type="url" value="https://wroclaw-transit.wowk-digital.workers.dev" autocomplete="off" spellcheck="false"></label>
+      <label>Find a stop <input id="m-q" placeholder="e.g. Budziszyńska" autocomplete="off"></label>
+      <label>Results <select id="m-results" size="1"><option value="">(type at least 2 letters)</option></select></label>
+      <div class="row">
+        <label>Stop code <input id="m-stop" placeholder="12020" autocomplete="off"></label>
+        <label>Lines (optional) <input id="m-lines" placeholder="13,23" autocomplete="off"></label>
+      </div>
+      <div class="row">
+        <label>Direction (optional) <input id="m-dir" placeholder="Stadion Olimpijski" autocomplete="off"></label>
+        <label>Colour <input id="m-color" type="color" value="#ffb000"></label>
+      </div>
+      <div class="row actions">
+        <button id="m-stop-btn" type="button" class="secondary">Stop departures</button>
+        <button id="m-start" type="button" class="primary">Start departures</button>
+      </div>
+      <p id="m-status" class="status" role="status"></p>
+    </div>
+
     <div id="tab-file" class="pane" hidden>
       <label>GIF or PNG file <input id="f-file" type="file" accept="image/gif,image/png"></label>
       <p class="hint">Best: 64×16 pixels, one shared palette of at most 16 colours, up to 64 KB. The file is sent unchanged.</p>
     </div>
   </section>
 
-  <section>
+  <section id="sec-send">
     <h2>3. Preview and send</h2>
     <canvas id="preview" width="64" height="16" aria-label="Preview of the panel"></canvas>
     <img id="file-preview" alt="Preview of the chosen file" hidden>

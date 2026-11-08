@@ -3,6 +3,13 @@
   "name": "act1033-led",
   "main": "src/index.ts",
   "compatibility_date": "2025-11-01",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+  "vars": {
+    "TRANSIT_URL": "https://wroclaw-transit.wowk-digital.workers.dev"
+  },
   "d1_databases": [
     {
       "binding": "DB",

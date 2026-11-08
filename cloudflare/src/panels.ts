@@ -13,12 +13,14 @@ export interface Env {
   POLL_IDLE_S?: string;
   POLL_BURST_S?: string;
   BURST_WINDOW_S?: string;
+  /** optional var: base URL of the public-transit API used by the departures job (see mpk.ts) */
+  TRANSIT_URL?: string;
 }
 
 export const MAX_IMAGE = 64 * 1024;
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
-interface PanelRow {
+export interface PanelRow {
   id: string;
   name: string;
   write_hash: string;
@@ -28,9 +30,13 @@ interface PanelRow {
   size: number;
   created_at: number;
   updated_at: number | null;
+  manual_at: number | null;
+  mpk: string | null;
+  mpk_enabled: number;
 }
 
-const COLUMNS = "id, name, write_hash, read_hash, content_type, etag, size, created_at, updated_at";
+const COLUMNS =
+  "id, name, write_hash, read_hash, content_type, etag, size, created_at, updated_at, manual_at, mpk, mpk_enabled";
 
 export type Role = "admin" | "write" | "read" | null;
 
@@ -39,7 +45,7 @@ export async function isAdmin(env: Env, token: string | null): Promise<boolean> 
   return safeEqual(await sha256hex(token), await sha256hex(env.ADMIN_TOKEN));
 }
 
-async function roleFor(env: Env, token: string | null, row: PanelRow): Promise<Role> {
+export async function roleFor(env: Env, token: string | null, row: PanelRow): Promise<Role> {
   if (!token) return null;
   if (await isAdmin(env, token)) return "admin";
   const h = await sha256hex(token);
@@ -57,10 +63,10 @@ export async function tokenIsValid(env: Env, token: string | null): Promise<bool
   return !!hit;
 }
 
-const unauthorized = () => new RenderError("missing or invalid token", 401);
-const forbidden = () => new RenderError("this token cannot do that", 403);
+export const unauthorized = () => new RenderError("missing or invalid token", 401);
+export const forbidden = () => new RenderError("this token cannot do that", 403);
 
-async function getPanel(env: Env, id: string): Promise<PanelRow> {
+export async function getPanel(env: Env, id: string): Promise<PanelRow> {
   if (!ID_RE.test(id)) throw new RenderError("invalid panel id", 400);
   const row = await env.DB.prepare(`SELECT ${COLUMNS} FROM panels WHERE id = ?1`).bind(id).first<PanelRow>();
   if (!row) throw new RenderError("panel not found", 404);
@@ -77,6 +83,7 @@ function meta(row: PanelRow) {
     size: row.size,
     created_at: row.created_at,
     updated_at: row.updated_at,
+    mpk_enabled: row.mpk_enabled === 1,
   };
 }
 
@@ -171,22 +178,42 @@ export async function panelPut(request: Request, env: Env, id: string): Promise<
   const type = sniff(body);
   if (!type) throw new RenderError("body must be a GIF or PNG file", 415);
 
-  const etag = `"${(await sha256hex(body)).slice(0, 16)}"`;
-  if (etag === row.etag) return Response.json({ ok: true, changed: false, etag, size: body.length });
-  const now = Math.floor(Date.now() / 1000);
-  await env.DB.prepare("UPDATE panels SET image = ?1, content_type = ?2, etag = ?3, size = ?4, updated_at = ?5 WHERE id = ?6")
-    .bind(body, type, etag, body.length, now, id)
-    .run();
-  return Response.json({ ok: true, changed: true, etag, size: body.length });
+  const r = await storeImage(env, row, body, type, true);
+  return Response.json({ ok: true, ...r });
 }
 
-/** Seconds the ESP should wait before its next check: short right after a change (more edits are likely), long when idle. */
-export function pollAfter(env: Env, updatedAt: number | null, now = Math.floor(Date.now() / 1000)): number {
+/**
+ * Stores the panel's image. `manual` = a person sent it: that switches the departures job off (the person's picture must
+ * stay) and starts the fast "burst" polling. Automatic updates (cron) never do either. Unchanged bytes are not rewritten.
+ */
+export async function storeImage(
+  env: Env,
+  row: Pick<PanelRow, "id" | "etag">,
+  bytes: Uint8Array,
+  type: string,
+  manual: boolean,
+): Promise<{ changed: boolean; etag: string; size: number }> {
+  const etag = `"${(await sha256hex(bytes)).slice(0, 16)}"`;
+  const now = Math.floor(Date.now() / 1000);
+  if (etag === row.etag) {
+    if (manual) await env.DB.prepare("UPDATE panels SET mpk_enabled = 0, manual_at = ?1 WHERE id = ?2").bind(now, row.id).run();
+    return { changed: false, etag, size: bytes.length };
+  }
+  await env.DB.prepare(
+    "UPDATE panels SET image = ?1, content_type = ?2, etag = ?3, size = ?4, updated_at = ?5, manual_at = CASE WHEN ?6 = 1 THEN ?5 ELSE manual_at END, mpk_enabled = CASE WHEN ?6 = 1 THEN 0 ELSE mpk_enabled END WHERE id = ?7",
+  )
+    .bind(bytes, type, etag, bytes.length, now, manual ? 1 : 0, row.id)
+    .run();
+  return { changed: true, etag, size: bytes.length };
+}
+
+/** Seconds the ESP should wait before its next check: short right after a person's change (more edits are likely), long when idle. */
+export function pollAfter(env: Env, manualAt: number | null, now = Math.floor(Date.now() / 1000)): number {
   const num = (v: string | undefined, d: number) => (v !== undefined && Number.isFinite(Number(v)) && Number(v) > 0 ? Math.floor(Number(v)) : d);
   const idle = num(env.POLL_IDLE_S, 30);
   const burst = num(env.POLL_BURST_S, 3);
   const window = num(env.BURST_WINDOW_S, 180);
-  return updatedAt !== null && now - updatedAt < window ? burst : idle;
+  return manualAt !== null && now - manualAt < window ? burst : idle;
 }
 
 export async function panelImage(request: Request, env: Env, id: string): Promise<Response> {
@@ -196,7 +223,7 @@ export async function panelImage(request: Request, env: Env, id: string): Promis
   const headers = {
     ETag: row.etag,
     "Cache-Control": "no-cache",
-    "X-Poll-After": String(pollAfter(env, row.updated_at)),
+    "X-Poll-After": String(pollAfter(env, row.manual_at)),
     "Access-Control-Expose-Headers": "ETag, X-Poll-After",
   };
   if (request.headers.get("If-None-Match") === row.etag) return new Response(null, { status: 304, headers });

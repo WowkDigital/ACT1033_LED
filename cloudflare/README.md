@@ -33,6 +33,10 @@ curl -X POST https://<your-worker>/admin/panels \
 The answer contains `write_token` (for the control page) and `read_token` (for the ESP) – **shown only once**. Give each person
 a panel of their own; lost tokens can be replaced with `POST /admin/panels/<id>/rotate`.
 
+The Worker also has a **cron trigger (every minute)** for the departures job (`docs/RENDER_API.md`). `TRANSIT_URL` (var, default the public
+Wrocław transit API) says where departures come from; the compatibility flag `global_fetch_strictly_public` lets the Worker call another
+Worker of your own account through its public `workers.dev` address.
+
 Optional vars: `POLL_BURST_S`, `POLL_IDLE_S`, `BURST_WINDOW_S` tune how fast the ESP checks after a change (see the API doc).
 Optional: set the variable `ALLOWED_ORIGIN` (e.g. `https://<you>.github.io`) in `wrangler.local.jsonc` under `"vars"` to
 restrict CORS to your control page.
@@ -40,7 +44,7 @@ restrict CORS to your control page.
 ## Development
 
 ```bash
-npm test                    # 14 tests, in-memory SQLite stands in for D1
+npm test                    # 20 tests, in-memory SQLite stands in for D1
 npm run check               # tsc --noEmit
 npm run dev                 # wrangler dev (uses wrangler.local.jsonc)
 python tools/gen_font.py    # regenerate src/font.ts after editing python/act1033led/font.py
@@ -54,4 +58,4 @@ python tools/gen_font.py    # regenerate src/font.ts after editing python/act103
 ## Free-plan limits (check the current Cloudflare docs)
 
 Workers: ~100k requests/day. D1: ~100k row writes and ~5M row reads per day. An ESP polling every 30 s uses ~2900 requests/day, and a
-`304` costs no D1 write. Uploads that do not change the picture are not written either.
+`304` costs no D1 write. The cron trigger adds 1440 invocations/day; the departures job writes to D1 only when the picture changes (≤ 1440 writes/day). Uploads that do not change the picture are not written either.

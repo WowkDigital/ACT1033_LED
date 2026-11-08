@@ -75,6 +75,22 @@ Errors are JSON `{ "error": "…" }` with 400 (bad input), 404 (missing frame), 
 policy lives in the Worker and can be tuned without re-flashing. Optional Worker variables: `POLL_BURST_S` (default 3),
 `POLL_IDLE_S` (30), `BURST_WINDOW_S` (180). A `304` costs no D1 write.
 
+## Departures job (runs on the Worker, no browser needed)
+
+A cron trigger (`* * * * *`, every minute) refreshes every panel that has the job enabled: it asks the transit API
+(`TRANSIT_URL`, default the public API from [API_GUIDE.md](API_GUIDE.md)) for the next two departures, renders them as two lines of
+5×7 text (line number on the left, minutes on the right, amber on black) and stores the picture only if it changed. The ESP picks it up
+at its idle poll (≤ 30 s). A failed transit call keeps the last picture.
+
+| Request | Token | Result |
+|---|---|---|
+| `PUT /panel/:id/mpk` `{"stop":"12020","lines":"13,23","dir":"Stadion Olimpijski","color":"#ffb000"}` | write / admin | validates, renders immediately, enables the job; answers with `stop_name` and `rows` |
+| `GET /panel/:id/mpk` | any panel token | `{enabled, config}` |
+| `DELETE /panel/:id/mpk` | write / admin | disables the job (the configuration is kept) |
+
+`stop` is a stop code (letters and digits); `lines` and `dir` are optional filters. **A manual upload (`PUT /panel/:id`) switches the job off**
+so the person's picture stays; automatic updates never trigger the fast burst polling (`X-Poll-After` follows manual changes only).
+
 ## Panel-specific behaviour built in
 
 - **PNG:** 1-bit indexed when the scene has ≤ 2 colours (~230 B for text), otherwise 8-bit RGB – the two variants tested on hardware.

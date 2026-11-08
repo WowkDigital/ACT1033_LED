@@ -3,7 +3,8 @@
 A static page for composing content and sending it to **your own** Cloudflare Worker ([../cloudflare](../cloudflare)).
 You enter the Worker URL, the panel ID and a write token; everything is rendered in the browser (text with Polish letters,
 scrolling/blinking, Game of Life, or any GIF/PNG file), shown in a live preview, and uploaded as a finished GIF.
-The ESP32 then downloads it at its next check.
+The ESP32 then downloads it at its next check. The **Departures** tab instead sets up an autonomous job that runs on the Worker
+(next public-transit departures for a stop, refreshed every minute) with no browser open.
 
 - No third-party scripts and no tracking. The token is sent only to the Worker URL you typed. "Remember on this device"
   stores it in this browser's `localStorage`; leave it unticked on shared computers.

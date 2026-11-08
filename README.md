@@ -27,7 +27,9 @@ one admin token for you). Several panels and ESPs are supported, each with its o
  (GitHub Pages)        (tokens, ETag)                                 (esp32-client/)
 ```
 
-Start with [cloudflare/README.md](cloudflare/README.md); API in [docs/RENDER_API.md](docs/RENDER_API.md).
+The Worker can also run the panel **on its own**: a per-minute cron job renders the next public-transit departures for a stop and
+stores them as the panel's picture (enable it from the control page's *Departures* tab). Start with
+[cloudflare/README.md](cloudflare/README.md); API in [docs/RENDER_API.md](docs/RENDER_API.md).
 
 Both sides render the same things (text, Game of Life, GIFs) into a GIF that stays inside the panel and keeps
 playing after the sender disconnects. The renderers are intentionally identical: the same text, seed and settings

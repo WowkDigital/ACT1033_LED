@@ -80,11 +80,11 @@ test("X-Poll-After: short right after a change, long when idle, on 200 and 304",
   assert.equal(fresh.headers.get("x-poll-after"), "3");
   const etag = fresh.headers.get("etag")!;
   assert.equal((await get(etag)).headers.get("x-poll-after"), "3"); // 304 carries it too
-  await env.DB.prepare("UPDATE panels SET updated_at = ?1 WHERE id = 'kitchen'").bind(Math.floor(Date.now() / 1000) - 1000).run();
+  await env.DB.prepare("UPDATE panels SET manual_at = ?1 WHERE id = 'kitchen'").bind(Math.floor(Date.now() / 1000) - 1000).run();
   const idle = await get(etag);
   assert.equal(idle.status, 304);
   assert.equal(idle.headers.get("x-poll-after"), "30");
-  await env.DB.prepare("UPDATE panels SET updated_at = ?1 WHERE id = 'kitchen'").bind(Math.floor(Date.now() / 1000)).run();
+  await env.DB.prepare("UPDATE panels SET manual_at = ?1 WHERE id = 'kitchen'").bind(Math.floor(Date.now() / 1000)).run();
 });
 
 test("pollAfter honours the optional vars", async () => {

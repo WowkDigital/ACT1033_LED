@@ -216,13 +216,99 @@ async function send() {
   }
 }
 
+// ---------------------------------------------------------------- departures job (runs in the Worker, see cloudflare/src/mpk.ts)
+let searchTimer;
+async function searchStops() {
+  const q = $("m-q").value.trim();
+  const sel = $("m-results");
+  if (q.length < 2) return;
+  try {
+    const res = await fetch($("m-api").value.trim().replace(/\/+$/, "") + "/search?q=" + encodeURIComponent(q));
+    const list = await res.json();
+    sel.innerHTML = "";
+    if (!Array.isArray(list) || !list.length) sel.add(new Option("No stops found", ""));
+    else {
+      sel.add(new Option("Choose a stop (" + list.length + ")", ""));
+      for (const s of list.slice(0, 30)) sel.add(new Option(s.name + " · " + s.stop_code, s.stop_code));
+    }
+  } catch {
+    say("m-status", "Cannot reach the transit API", "err");
+  }
+}
+
+function mpkSummary(j) {
+  const rows = (j.rows || []).map((r) => r.left + " " + r.right).join(" · ") || "no departures right now";
+  return (j.stop_name ? j.stop_name + ": " : "") + rows;
+}
+
+async function mpkLoad() {
+  try {
+    const c = connection();
+    const res = await fetch(c.url + "/mpk", { headers: c.auth });
+    if (!res.ok) return;
+    const j = await res.json();
+    if (j.config) {
+      $("m-stop").value = j.config.stop || "";
+      $("m-lines").value = j.config.lines || "";
+      $("m-dir").value = j.config.dir || "";
+      $("m-color").value = j.config.color || "#ffb000";
+    }
+    say("m-status", j.enabled ? "Departures are running on the Worker (stop " + j.config.stop + ")" : "Departures are off", j.enabled ? "ok" : "");
+  } catch {
+    /* connection fields not filled in yet */
+  }
+}
+
+async function mpkStart() {
+  say("m-status", "Starting…");
+  try {
+    const c = connection();
+    const res = await fetch(c.url + "/mpk", {
+      method: "PUT",
+      headers: { ...c.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ stop: $("m-stop").value, lines: $("m-lines").value, dir: $("m-dir").value, color: $("m-color").value }),
+    });
+    if (!res.ok) return say("m-status", await explain(res), "err");
+    const j = await res.json();
+    say("m-status", "Running. " + mpkSummary(j) + ". The ESP shows it within about 30 s and the Worker refreshes it every minute.", "ok");
+    persist();
+  } catch (e) {
+    say("m-status", e instanceof TypeError ? "Cannot reach the Worker (check the URL; CORS or network)" : e.message, "err");
+  }
+}
+
+async function mpkStop() {
+  try {
+    const c = connection();
+    const res = await fetch(c.url + "/mpk", { method: "DELETE", headers: c.auth });
+    if (!res.ok) return say("m-status", await explain(res), "err");
+    say("m-status", "Departures stopped. The panel keeps the last picture until you send another.", "ok");
+  } catch (e) {
+    say("m-status", e.message, "err");
+  }
+}
+
+$("m-q").addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(searchStops, 300);
+});
+$("m-results").addEventListener("change", () => {
+  if ($("m-results").value) $("m-stop").value = $("m-results").value;
+});
+$("m-start").addEventListener("click", mpkStart);
+$("m-stop-btn").addEventListener("click", mpkStop);
+
 // ---------------------------------------------------------------- wiring
 for (const b of document.querySelectorAll(".tabs button")) {
   b.addEventListener("click", () => {
     tab = b.dataset.tab;
     for (const o of document.querySelectorAll(".tabs button")) o.setAttribute("aria-selected", String(o === b));
-    for (const t of ["text", "life", "file"]) $("tab-" + t).hidden = t !== tab;
-    refresh();
+    for (const t of ["text", "life", "file", "mpk"]) $("tab-" + t).hidden = t !== tab;
+    $("sec-send").hidden = tab === "mpk";
+    if (tab === "mpk") {
+      stopPlayer();
+      mpkLoad();
+    } else refresh();
   });
 }
 let debounce;
