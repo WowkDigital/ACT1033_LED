@@ -7,101 +7,117 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<header class="top">
+  <div class="top-in">
+    <h1>ACT1033 LED panel</h1>
+    <span id="chip" class="chip off" role="status"><i class="dot"></i><span id="chip-text">Not connected</span></span>
+  </div>
+  <nav class="nav" role="tablist" aria-label="Sections">
+    <button type="button" role="tab" data-view="send" aria-selected="true">Send</button>
+    <button type="button" role="tab" data-view="mpk" aria-selected="false">Departures</button>
+    <button type="button" role="tab" data-view="debug" aria-selected="false">Debug</button>
+    <button type="button" role="tab" data-view="settings" aria-selected="false">Settings</button>
+  </nav>
+</header>
+
 <main>
-  <h1>ACT1033 LED panel</h1>
-  <p class="lead">Compose something for your 64×16 panel and send it to your own Cloudflare Worker. Your ESP32 picks it up and shows it. Everything is rendered in this browser; the token never leaves it except to talk to your Worker.</p>
-
-  <section>
-    <h2>1. Connection and settings</h2>
-    <label>Worker URL <input id="worker" type="url" placeholder="https://act1033-led.your-name.workers.dev" autocomplete="off" spellcheck="false"></label>
-    <div class="row">
-      <label>Panel ID <input id="panel" placeholder="kitchen" autocomplete="off" spellcheck="false"></label>
-      <label>Token (write or admin) <input id="token" type="password" placeholder="w_…" autocomplete="off" spellcheck="false"></label>
-    </div>
-    <div class="row actions">
-      <label class="check"><input id="remember" type="checkbox"> Remember on this device</label>
-      <button id="connect" type="button">Check connection</button>
-    </div>
-    <p id="conn-status" class="status" role="status"></p>
-    <label>Brightness (all content) <span id="bright-val">100%</span>
-      <input id="brightness" type="range" min="5" max="100" value="100">
-    </label>
-    <p class="hint">Applies to everything you generate here (text, Game of Life, blobs); a ready-made GIF/PNG file is sent unchanged. Saved in this browser.</p>
-  </section>
-
-  <section>
-    <h2>2. Content</h2>
-    <div class="tabs" role="tablist">
-      <button type="button" role="tab" data-tab="text" aria-selected="true">Text</button>
-      <button type="button" role="tab" data-tab="life" aria-selected="false">Game of Life</button>
-      <button type="button" role="tab" data-tab="blobs" aria-selected="false">Blobs</button>
-      <button type="button" role="tab" data-tab="file" aria-selected="false">GIF / PNG file</button>
-      <button type="button" role="tab" data-tab="mpk" aria-selected="false">Departures</button>
-    </div>
-
-    <div id="tab-text" class="pane">
-      <label>Text <input id="t-text" value="Hello" maxlength="200"></label>
-      <div class="row">
-        <label>Mode
-          <select id="t-mode"><option value="scroll">Scroll</option><option value="static">Static</option><option value="blink">Blink</option></select>
-        </label>
-        <label>Size
-          <select id="t-scale"><option value="1">5×7 (Polish letters)</option><option value="2">10×14</option></select>
-        </label>
-        <label>Speed <input id="t-speed" type="range" min="1" max="5" value="3"></label>
-      </div>
-      <div class="row">
-        <label>Text colour <input id="t-fg" type="color" value="#00ff00"></label>
-        <label>Background <input id="t-bg" type="color" value="#000000"></label>
-      </div>
-    </div>
-
-    <div id="tab-life" class="pane" hidden>
-      <div class="row">
-        <label>Colour <input id="l-fg" type="color" value="#00ff00"></label>
-        <label>Background <input id="l-bg" type="color" value="#000000"></label>
-        <label>Density <input id="l-density" type="range" min="10" max="60" value="30"></label>
-      </div>
-      <div class="row">
-        <label>Seed <input id="l-seed" type="number" value="1" min="0" step="1"></label>
-        <label>Frames <input id="l-frames" type="number" value="120" min="10" max="600" step="10"></label>
-        <label>Frame time (ms) <input id="l-delay" type="number" value="150" min="50" max="1000" step="10"></label>
-      </div>
+  <!-- ============================================================ Send -->
+  <div id="view-send" class="view">
+    <section id="sec-send" class="card preview-card">
+      <canvas id="preview" width="64" height="16" aria-label="Preview of the panel"></canvas>
+      <img id="file-preview" alt="Preview of the chosen file" hidden>
+      <p id="info" class="status"></p>
       <div class="row actions">
-        <label class="check"><input id="l-wrap" type="checkbox" checked> Wrap around edges</label>
-        <button id="l-random" type="button" class="secondary">New random seed</button>
-      </div>
-    </div>
-
-    <div id="tab-blobs" class="pane" hidden>
-      <label>Colour preset <select id="b-palette"></select></label>
-      <div id="b-swatches" class="swatches" aria-hidden="true"></div>
-      <div class="row">
-        <label>Min radius <input id="b-min" type="range" min="1" max="6" value="2"></label>
-        <label>Max radius <input id="b-max" type="range" min="2" max="8" value="7"></label>
-        <label>Wobble <input id="b-wobble" type="range" min="0" max="30" value="8"></label>
-      </div>
-      <div class="row">
-        <label>Seed <input id="b-seed" type="number" value="1" min="0" step="1"></label>
-        <label>Frame time (ms) <input id="b-delay" type="number" value="120" min="50" max="1000" step="10"></label>
-      </div>
-      <div class="row">
-        <label>Animation
-          <select id="b-mode">
-            <option value="scroll">Blobs move to the right</option>
-            <option value="appear">Blobs appear one by one</option>
-            <option value="still">Still picture</option>
-          </select>
+        <label class="bright">Brightness <span id="bright-val">100%</span>
+          <input id="brightness" type="range" min="5" max="100" value="100">
         </label>
-        <label>Scroll speed (px per frame) <select id="b-step"><option value="1">1 (smooth)</option><option value="2" selected>2</option><option value="4">4 (small file)</option></select></label>
+        <button id="send" type="button" class="primary" disabled>Send to panel</button>
       </div>
-      <div class="row actions">
-        <span></span>
-        <button id="b-random" type="button" class="secondary">New random blobs</button>
-      </div>
-    </div>
+      <p id="send-status" class="status" role="status"></p>
+    </section>
 
-    <div id="tab-mpk" class="pane" hidden>
+    <section class="card">
+      <div class="tabs" role="tablist" aria-label="Content type">
+        <button type="button" role="tab" data-tab="text" aria-selected="true">Text</button>
+        <button type="button" role="tab" data-tab="life" aria-selected="false">Game of Life</button>
+        <button type="button" role="tab" data-tab="blobs" aria-selected="false">Blobs</button>
+        <button type="button" role="tab" data-tab="file" aria-selected="false">GIF / PNG file</button>
+      </div>
+
+      <div id="tab-text" class="pane">
+        <label>Text <input id="t-text" value="Hello" maxlength="200"></label>
+        <div class="row">
+          <label>Mode
+            <select id="t-mode"><option value="scroll">Scroll</option><option value="static">Static</option><option value="blink">Blink</option></select>
+          </label>
+          <label>Size
+            <select id="t-scale"><option value="1">5×7 (Polish letters)</option><option value="2">10×14</option></select>
+          </label>
+          <label>Speed <input id="t-speed" type="range" min="1" max="5" value="3"></label>
+        </div>
+        <div class="row">
+          <label>Text colour <input id="t-fg" type="color" value="#00ff00"></label>
+          <label>Background <input id="t-bg" type="color" value="#000000"></label>
+        </div>
+      </div>
+
+      <div id="tab-life" class="pane" hidden>
+        <div class="row">
+          <label>Colour <input id="l-fg" type="color" value="#00ff00"></label>
+          <label>Background <input id="l-bg" type="color" value="#000000"></label>
+          <label>Density <input id="l-density" type="range" min="10" max="60" value="30"></label>
+        </div>
+        <div class="row">
+          <label>Seed <input id="l-seed" type="number" value="1" min="0" step="1"></label>
+          <label>Frames <input id="l-frames" type="number" value="120" min="10" max="600" step="10"></label>
+          <label>Frame time (ms) <input id="l-delay" type="number" value="150" min="50" max="1000" step="10"></label>
+        </div>
+        <div class="row actions">
+          <label class="check"><input id="l-wrap" type="checkbox" checked> Wrap around edges</label>
+          <button id="l-random" type="button" class="secondary">New random seed</button>
+        </div>
+      </div>
+
+      <div id="tab-blobs" class="pane" hidden>
+        <label>Colour preset <select id="b-palette"></select></label>
+        <div id="b-swatches" class="swatches" aria-hidden="true"></div>
+        <div class="row">
+          <label>Min radius <input id="b-min" type="range" min="1" max="6" value="2"></label>
+          <label>Max radius <input id="b-max" type="range" min="2" max="8" value="7"></label>
+          <label>Wobble <input id="b-wobble" type="range" min="0" max="30" value="8"></label>
+        </div>
+        <div class="row">
+          <label>Seed <input id="b-seed" type="number" value="1" min="0" step="1"></label>
+          <label>Frame time (ms) <input id="b-delay" type="number" value="120" min="50" max="1000" step="10"></label>
+        </div>
+        <div class="row">
+          <label>Animation
+            <select id="b-mode">
+              <option value="scroll">Blobs move to the right</option>
+              <option value="appear">Blobs appear one by one</option>
+              <option value="still">Still picture</option>
+            </select>
+          </label>
+          <label>Scroll speed (px per frame) <select id="b-step"><option value="1">1 (smooth)</option><option value="2" selected>2</option><option value="4">4 (small file)</option></select></label>
+        </div>
+        <div class="row actions">
+          <span></span>
+          <button id="b-random" type="button" class="secondary">New random blobs</button>
+        </div>
+      </div>
+
+      <div id="tab-file" class="pane" hidden>
+        <label>GIF or PNG file <input id="f-file" type="file" accept="image/gif,image/png"></label>
+        <p class="hint">Best: 64×16 pixels, one shared palette of at most 16 colours, up to 64 KB. The file is sent unchanged. Brightness does not apply to files.</p>
+      </div>
+      <p class="hint">Brightness applies to text, Game of Life and blobs. It is saved in this browser.</p>
+    </section>
+  </div>
+
+  <!-- ============================================================ Departures -->
+  <div id="view-mpk" class="view" hidden>
+    <section class="card">
+      <h2>Public-transit departures</h2>
       <p class="hint">The Worker refreshes the next departures every minute, so the panel keeps running on its own. Sending any other picture to this panel switches this off.</p>
       <label>Transit API <input id="m-api" type="url" value="https://wroclaw-transit.wowk-digital.workers.dev" autocomplete="off" spellcheck="false"></label>
       <label>Find a stop <input id="m-q" placeholder="e.g. Budziszyńska" autocomplete="off"></label>
@@ -125,27 +141,65 @@
         <button id="m-start" type="button" class="primary">Start departures</button>
       </div>
       <p id="m-status" class="status" role="status"></p>
+    </section>
+  </div>
+
+  <!-- ============================================================ Debug -->
+  <div id="view-debug" class="view" hidden>
+    <div class="cards">
+      <section class="card"><h2>ESP32</h2><dl id="d-esp" class="kv"></dl></section>
+      <section class="card"><h2>Image on the Worker</h2><dl id="d-img" class="kv"></dl></section>
+      <section class="card"><h2>Worker connection</h2><dl id="d-net" class="kv"></dl></section>
     </div>
 
-    <div id="tab-file" class="pane" hidden>
-      <label>GIF or PNG file <input id="f-file" type="file" accept="image/gif,image/png"></label>
-      <p class="hint">Best: 64×16 pixels, one shared palette of at most 16 colours, up to 64 KB. The file is sent unchanged.</p>
-    </div>
-  </section>
+    <section class="card">
+      <div class="row actions head">
+        <h2>Events (newest first)</h2>
+        <span class="btns">
+          <label class="check"><input id="d-auto" type="checkbox" checked> Auto-refresh</label>
+          <button id="d-refresh" type="button" class="secondary">Refresh</button>
+          <button id="d-copy" type="button" class="secondary">Copy report</button>
+        </span>
+      </div>
+      <div id="d-filters" class="chips"></div>
+      <div class="tablewrap">
+        <table id="d-events"><thead><tr><th>Time</th><th>Event</th><th>Details</th></tr></thead><tbody></tbody></table>
+      </div>
+      <p id="d-status" class="status" role="status"></p>
+      <p class="hint">The Worker keeps the last 200 events. Repeated "nothing new" checks (304) are not stored; they only update "last check-in". Low-level Bluetooth packets between the ESP32 and the panel are not reported by the current firmware – use the USB serial monitor for those.</p>
+    </section>
 
-  <section id="sec-send">
-    <h2>3. Preview and send</h2>
-    <canvas id="preview" width="64" height="16" aria-label="Preview of the panel"></canvas>
-    <img id="file-preview" alt="Preview of the chosen file" hidden>
-    <p id="info" class="status"></p>
-    <div class="row actions">
-      <button id="send" type="button" class="primary" disabled>Send to panel</button>
-    </div>
-    <p id="send-status" class="status" role="status"></p>
-  </section>
+    <section class="card">
+      <div class="row actions head">
+        <h2>Requests sent from this page</h2>
+        <button id="d-clear" type="button" class="secondary">Clear</button>
+      </div>
+      <div class="tablewrap">
+        <table id="d-log"><thead><tr><th>Time</th><th>Request</th><th>Status</th><th>Took</th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+  </div>
+
+  <!-- ============================================================ Settings -->
+  <div id="view-settings" class="view" hidden>
+    <section class="card">
+      <h2>Connection</h2>
+      <p class="hint">You only need this once. Everything is rendered in this browser; the token is sent only to the Worker URL you type here.</p>
+      <label>Worker URL <input id="worker" type="url" placeholder="https://act1033-led.your-name.workers.dev" autocomplete="off" spellcheck="false"></label>
+      <div class="row">
+        <label>Panel ID <input id="panel" placeholder="kitchen" autocomplete="off" spellcheck="false"></label>
+        <label>Token (write or admin) <input id="token" type="password" placeholder="w_…" autocomplete="off" spellcheck="false"></label>
+      </div>
+      <div class="row actions">
+        <label class="check"><input id="remember" type="checkbox"> Remember on this device</label>
+        <button id="connect" type="button" class="primary">Check connection</button>
+      </div>
+      <p id="conn-status" class="status" role="status"></p>
+    </section>
+  </div>
 
   <footer>
-    <a href="admin/">Panel admin</a> · <a href="https://github.com/WowkDigital/ACT1033_LED">Source code</a> ·Setup guide in the repository README
+    <a href="admin/">Panel admin</a> · <a href="https://github.com/WowkDigital/ACT1033_LED">Source code</a> · Setup guide in the repository README
   </footer>
 </main>
 <script type="module" src="app.js"></script>

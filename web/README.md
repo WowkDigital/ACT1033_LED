@@ -12,6 +12,14 @@ The ESP32 then downloads it at its next check. The **Departures** tab instead se
 - The renderer is the **same code as the Worker's** (`../cloudflare/src`), bundled by esbuild, so previews match what the Worker would produce.
   Game of Life is verified frame-for-frame against the Python implementation (`npm test`).
 
+## Sections
+
+The page has four sections: **Send** (live preview + Text / Game of Life / Blobs / file), **Departures**, **Debug** and **Settings**
+(the Worker URL, panel ID and token - needed once; the page opens it by itself when nothing is saved). The header chip shows whether the ESP32
+is checking in. **Debug** shows the ESP's last check-in and poll interval, the stored image, the Worker's last 200 events (uploads,
+image downloads by the ESP, rejected tokens), the requests this page sent, and a "Copy report" button (no tokens in it). The data comes
+from `GET /panel/:id/debug`, so the Worker needs migration `0005_debug.sql` (`npm run migrate` in `cloudflare/`).
+
 ## Admin page
 
 `admin/` (on GitHub Pages: `https://<you>.github.io/ACT1033_LED/admin/`) manages panels entirely in the browser: sign in with the admin

@@ -16,6 +16,7 @@ import {
   adminDelete,
   adminList,
   adminRotate,
+  panelDebug,
   panelImage,
   panelMeta,
   panelPut,
@@ -54,6 +55,7 @@ const USAGE = {
     "PUT /panel/:id": "upload GIF/PNG (write token)",
     "GET /panel/:id/image": "download the current image, supports If-None-Match (read token)",
     "GET /panel/:id": "metadata",
+    "GET /panel/:id/debug": "ESP last-seen time, poll interval and recent events (any panel token)",
     "GET|PUT|DELETE /panel/:id/mpk": "departures job: show the next departures from a stop, refreshed every minute by a cron trigger",
     "POST /admin/login": "password -> admin session token (8 h)",
     "POST|GET /admin/panels": "create / list panels (admin session)",
@@ -136,10 +138,14 @@ async function handle(request: Request, env: Env): Promise<Response> {
     return adminDelete(request, env, m[1]!);
   }
 
-  m = /^\/panel\/([^/]+)(\/image|\/mpk)?$/.exec(path);
+  m = /^\/panel\/([^/]+)(\/image|\/mpk|\/debug)?$/.exec(path);
   if (m) {
     const id = m[1]!;
     if (m[2] === "/mpk") return mpkRoute(request, env, id);
+    if (m[2] === "/debug") {
+      if (method !== "GET") throw new RenderError("use GET", 405);
+      return panelDebug(request, env, id);
+    }
     if (m[2]) {
       if (method !== "GET") throw new RenderError("use GET", 405);
       return panelImage(request, env, id);

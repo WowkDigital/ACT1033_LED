@@ -119,6 +119,32 @@ test("X-Poll-After: short right after a change, long when idle, on 200 and 304",
   await env.DB.prepare("UPDATE panels SET manual_at = ?1 WHERE id = 'kitchen'").bind(Math.floor(Date.now() / 1000)).run();
 });
 
+test("debug: records ESP polls, uploads and auth failures; requires a token", async () => {
+  type Dbg = { esp: { last_seen_at: number | null; last_status: number | null; online: boolean; age_s: number | null }; events: { kind: string; detail: Record<string, unknown> }[]; poll_after: number };
+  assert.equal((await call("/panel/garage/debug")).status, 401);
+  const before = (await (await call("/panel/garage/debug", { token: garage.read_token })).json()) as Dbg;
+  assert.equal(before.esp.last_seen_at, null);
+  assert.equal(before.esp.online, false);
+
+  await call("/panel/garage", { method: "PUT", token: garage.write_token, body: gif });
+  const got = await call("/panel/garage/image", { token: garage.read_token, headers: { "User-Agent": "ACT1033-ESP32" } });
+  assert.equal(got.status, 200);
+  const etag = got.headers.get("etag")!;
+  assert.equal((await call("/panel/garage/image", { token: garage.read_token, headers: { "If-None-Match": etag } })).status, 304);
+  assert.equal((await call("/panel/garage/image", { token: "r_wrong" })).status, 401);
+  assert.equal((await call("/panel/garage/image", { token: "r_wrong" })).status, 401);
+
+  const d = (await (await call("/panel/garage/debug", { token: garage.write_token })).json()) as Dbg;
+  assert.equal(d.esp.online, true);
+  assert.equal(d.esp.last_status, 304);
+  assert.ok(d.poll_after > 0);
+  const kinds = d.events.map((e) => e.kind);
+  assert.deepEqual(kinds.slice().reverse(), ["upload", "online", "delivered", "poll", "auth_fail"], "newest first; 304 not logged unless the outcome changed; auth_fail throttled");
+  assert.equal(d.events.at(-1)!.detail.source, "page");
+  assert.equal((await call("/panel/kitchen/debug", { token: garage.read_token })).status, 401, "other panel's token");
+  assert.equal((await call("/panel/garage/debug", { method: "POST", token: garage.read_token })).status, 405);
+});
+
 test("pollAfter honours the optional vars", async () => {
   const { pollAfter } = await import("../src/panels.ts");
   const now = 10_000;

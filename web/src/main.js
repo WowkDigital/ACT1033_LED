@@ -5,6 +5,8 @@ import { encodeGif } from "../../cloudflare/src/encode.ts";
 import { H, W, lifeFrames } from "./life.js";
 import { PALETTES } from "./blobs.js";
 import { blobFrames } from "./blobs-render.js";
+import { api, clearLog, setLogListener } from "./api.js";
+import { buildReport, chipFor, renderDebug, renderError, renderFilters, renderLog } from "./debug.js";
 
 const MAX = 64 * 1024;
 const KEY = "act1033-led";
@@ -237,12 +239,13 @@ async function check() {
   say("conn-status", "Checking…");
   try {
     const c = connection();
-    const res = await fetch(c.url, { headers: c.auth });
+    const res = await api(c.url, { headers: c.auth });
     if (!res.ok) return say("conn-status", await explain(res), "err");
     const m = await res.json();
     const when = m.updated_at ? "last update " + new Date(m.updated_at * 1000).toLocaleString() : "no picture yet";
     say("conn-status", 'Connected to panel "' + m.name + '" (' + when + ")", "ok");
     persist();
+    pollChip();
   } catch (e) {
     say("conn-status", e instanceof TypeError ? "Cannot reach the Worker (check the URL; CORS or network)" : e.message, "err");
   }
@@ -253,7 +256,7 @@ async function send() {
   $("send").disabled = true;
   try {
     const c = connection();
-    const res = await fetch(c.url, { method: "PUT", headers: c.auth, body: current.bytes });
+    const res = await api(c.url, { method: "PUT", headers: c.auth, body: current.bytes });
     if (!res.ok) return say("send-status", await explain(res), "err");
     const j = await res.json();
     say("send-status", j.changed ? "Sent " + j.size + " B. The ESP picks it up within a few seconds." : "Identical to the current picture; nothing to do.", "ok");
@@ -293,7 +296,7 @@ function mpkSummary(j) {
 async function mpkLoad() {
   try {
     const c = connection();
-    const res = await fetch(c.url + "/mpk", { headers: c.auth });
+    const res = await api(c.url + "/mpk", { headers: c.auth });
     if (!res.ok) return;
     const j = await res.json();
     if (j.config) {
@@ -313,7 +316,7 @@ async function mpkStart() {
   say("m-status", "Starting…");
   try {
     const c = connection();
-    const res = await fetch(c.url + "/mpk", {
+    const res = await api(c.url + "/mpk", {
       method: "PUT",
       headers: { ...c.auth, "Content-Type": "application/json" },
       body: JSON.stringify({ stop: $("m-stop").value, lines: $("m-lines").value, dir: $("m-dir").value, color: $("m-color").value, mode: $("m-mode").value }),
@@ -330,7 +333,7 @@ async function mpkStart() {
 async function mpkStop() {
   try {
     const c = connection();
-    const res = await fetch(c.url + "/mpk", { method: "DELETE", headers: c.auth });
+    const res = await api(c.url + "/mpk", { method: "DELETE", headers: c.auth });
     if (!res.ok) return say("m-status", await explain(res), "err");
     say("m-status", "Departures stopped. The panel keeps the last picture until you send another.", "ok");
   } catch (e) {
@@ -353,14 +356,112 @@ for (const b of document.querySelectorAll(".tabs button")) {
   b.addEventListener("click", () => {
     tab = b.dataset.tab;
     for (const o of document.querySelectorAll(".tabs button")) o.setAttribute("aria-selected", String(o === b));
-    for (const t of ["text", "life", "blobs", "file", "mpk"]) $("tab-" + t).hidden = t !== tab;
-    $("sec-send").hidden = tab === "mpk";
-    if (tab === "mpk") {
-      stopPlayer();
-      mpkLoad();
-    } else refresh();
+    for (const t of ["text", "life", "blobs", "file"]) $("tab-" + t).hidden = t !== tab;
+    refresh();
   });
 }
+
+// ---------------------------------------------------------------- sections (Send / Departures / Debug / Settings)
+const VIEWS = ["send", "mpk", "debug", "settings"];
+let view = "send";
+function show(next, remember = true) {
+  view = VIEWS.includes(next) ? next : "send";
+  for (const v of VIEWS) $("view-" + v).hidden = v !== view;
+  for (const b of document.querySelectorAll(".nav button")) b.setAttribute("aria-selected", String(b.dataset.view === view));
+  if (remember) {
+    const h = new URLSearchParams(location.hash.slice(1)); // keeps worker= / panel= from the shared link
+    h.set("view", view);
+    history.replaceState(null, "", "#" + h.toString());
+  }
+  if (view === "send") refresh();
+  else stopPlayer();
+  if (view === "mpk") mpkLoad();
+  if (view === "debug") pollDebug();
+  schedulePolling();
+}
+for (const b of document.querySelectorAll(".nav button")) b.addEventListener("click", () => show(b.dataset.view));
+
+// ---------------------------------------------------------------- status chip + Debug tab
+let lastDebug = null; // last /debug answer
+let skew = 0; // server clock minus this computer's clock, seconds
+let latency = 0;
+let pollTimer = null;
+
+function hasConnection() {
+  return !!($("worker").value.trim() && $("panel").value.trim() && $("token").value.trim());
+}
+function paintChip() {
+  const c = lastDebug ? chipFor(lastDebug, skew) : hasConnection() ? { text: "Connecting…", cls: "off" } : { text: "Not connected", cls: "off" };
+  $("chip").className = "chip " + c.cls;
+  $("chip-text").textContent = c.text;
+}
+async function fetchDebug(quiet) {
+  const c = connection();
+  const t0 = performance.now();
+  const res = await api(c.url + "/debug", { headers: c.auth, cache: "no-store" }, { quiet });
+  latency = Math.round(performance.now() - t0);
+  if (!res.ok) throw new Error(await explain(res));
+  const data = await res.json();
+  skew = data.now - Date.now() / 1000;
+  lastDebug = data;
+  return data;
+}
+async function pollChip() {
+  if (!hasConnection()) return paintChip();
+  try {
+    await fetchDebug(true);
+  } catch {
+    lastDebug = null;
+  }
+  paintChip();
+}
+async function pollDebug() {
+  if (view !== "debug") return;
+  try {
+    const data = await fetchDebug(false);
+    renderDebug(data, { skew, latency });
+    say("d-status", "", "");
+  } catch (e) {
+    lastDebug = null;
+    renderError(e instanceof TypeError ? "Cannot reach the Worker (check the URL; CORS or network)" : e.message);
+    say("d-status", "", "");
+  }
+  renderLog();
+  paintChip();
+}
+function schedulePolling() {
+  clearInterval(pollTimer);
+  const debugging = view === "debug" && $("d-auto").checked;
+  const every = debugging ? 3000 : 15000;
+  pollTimer = setInterval(() => {
+    if (document.hidden) return;
+    if (view === "debug") {
+      if ($("d-auto").checked) pollDebug();
+    } else pollChip();
+  }, every);
+}
+setInterval(() => {
+  // keep the "x s ago" texts moving between polls
+  if (lastDebug) {
+    paintChip();
+    if (view === "debug") renderDebug(lastDebug, { skew, latency });
+  }
+}, 1000);
+setLogListener(() => view === "debug" && renderLog());
+renderFilters();
+$("d-auto").addEventListener("change", schedulePolling);
+$("d-refresh").addEventListener("click", pollDebug);
+$("d-clear").addEventListener("click", clearLog);
+$("d-copy").addEventListener("click", async () => {
+  if (!lastDebug) return say("d-status", "Nothing to copy yet", "err");
+  try {
+    await navigator.clipboard.writeText(buildReport(lastDebug, { skew, latency }));
+    say("d-status", "Report copied (contains no tokens or Worker URL)", "ok");
+  } catch {
+    say("d-status", "The browser blocked clipboard access", "err");
+  }
+});
+for (const id of ["worker", "panel", "token"]) $(id).addEventListener("change", pollChip);
 let debounce;
 $("brightness").addEventListener("input", () => {
   $("bright-val").textContent = $("brightness").value + "%";
@@ -402,4 +503,9 @@ function showSwatches() {
 $("b-palette").addEventListener("change", showSwatches);
 $("b-palette").selectedIndex = Math.floor(Math.random() * Object.keys(PALETTES).length);
 showSwatches();
-refresh();
+// First run (nothing saved, no link): open Settings. Otherwise the section from the link, else Send.
+{
+  const wanted = new URLSearchParams(location.hash.slice(1)).get("view");
+  show(!hasConnection() ? "settings" : wanted || "send", false);
+  pollChip();
+}

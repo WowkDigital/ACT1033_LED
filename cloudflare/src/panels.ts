@@ -43,10 +43,13 @@ export interface PanelRow {
   mpk_enabled: number;
   mpk_state: string | null;
   fresh_at: number | null;
+  last_seen_at: number | null;
+  last_seen_status: number | null;
+  last_seen_ua: string | null;
 }
 
 const COLUMNS =
-  "id, name, write_hash, read_hash, content_type, etag, size, created_at, updated_at, manual_at, mpk, mpk_enabled, mpk_state, fresh_at";
+  "id, name, write_hash, read_hash, content_type, etag, size, created_at, updated_at, manual_at, mpk, mpk_enabled, mpk_state, fresh_at, last_seen_at, last_seen_status, last_seen_ua";
 
 export type Role = "admin" | "write" | "read" | null;
 
@@ -94,6 +97,70 @@ function meta(row: PanelRow) {
   };
 }
 
+// ---------------------------------------------------------------- debug telemetry
+const EVENT_LIMIT = 200;
+const nowS = () => Math.floor(Date.now() / 1000);
+
+/** Appends an event to the panel's ring buffer (newest 200 kept). Never throws: telemetry must not break the real request. */
+export async function logEvent(env: Env, panelId: string, kind: string, detail: Record<string, unknown> = {}): Promise<void> {
+  try {
+    await env.DB.prepare("INSERT INTO panel_events (panel_id, at, kind, detail) VALUES (?1, ?2, ?3, ?4)")
+      .bind(panelId, nowS(), kind, JSON.stringify(detail))
+      .run();
+    await env.DB.prepare("DELETE FROM panel_events WHERE panel_id = ?1 AND id <= (SELECT MAX(id) FROM panel_events WHERE panel_id = ?1) - ?2")
+      .bind(panelId, EVENT_LIMIT)
+      .run();
+  } catch (e) {
+    console.error("logEvent", e);
+  }
+}
+
+/** Remembers that the ESP just asked for the image. Rewrites the row at most every 10 s unless the outcome changed. */
+async function recordPoll(env: Env, row: PanelRow, status: number, request: Request, pollAfterS: number): Promise<void> {
+  const now = nowS();
+  const gap = row.last_seen_at === null ? Infinity : now - row.last_seen_at;
+  try {
+    if (gap >= 10 || row.last_seen_status !== status) {
+      await env.DB.prepare("UPDATE panels SET last_seen_at = ?1, last_seen_status = ?2, last_seen_ua = ?3 WHERE id = ?4")
+        .bind(now, status, (request.headers.get("User-Agent") ?? "").slice(0, 80), row.id)
+        .run();
+    }
+    if (gap > pollAfterS * 3 + 10) await logEvent(env, row.id, "online", { after_s: Number.isFinite(gap) ? gap : null });
+    if (status === 200) await logEvent(env, row.id, "delivered", { etag: row.etag, size: row.size });
+    else if (row.last_seen_status !== status) await logEvent(env, row.id, "poll", { status });
+  } catch (e) {
+    console.error("recordPoll", e);
+  }
+}
+
+export async function panelDebug(request: Request, env: Env, id: string): Promise<Response> {
+  const row = await getPanel(env, id);
+  if (!(await roleFor(env, bearer(request), row))) throw unauthorized();
+  const now = nowS();
+  const poll = pollAfter(env, row.manual_at, now, row.fresh_at);
+  const { results } = await env.DB.prepare("SELECT id, at, kind, detail FROM panel_events WHERE panel_id = ?1 ORDER BY id DESC LIMIT ?2")
+    .bind(id, EVENT_LIMIT)
+    .all<{ id: number; at: number; kind: string; detail: string | null }>();
+  const age = row.last_seen_at === null ? null : now - row.last_seen_at;
+  return Response.json(
+    {
+      now,
+      panel: { ...meta(row), manual_at: row.manual_at, fresh_at: row.fresh_at },
+      poll_after: poll,
+      esp: {
+        last_seen_at: row.last_seen_at,
+        age_s: age,
+        last_status: row.last_seen_status,
+        user_agent: row.last_seen_ua,
+        online: age !== null && age <= poll * 3 + 10,
+        offline_after_s: poll * 3 + 10,
+      },
+      events: results.map((e) => ({ id: e.id, at: e.at, kind: e.kind, detail: e.detail ? JSON.parse(e.detail) : {} })),
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  );
+}
+
 // ---------------------------------------------------------------- admin
 async function requireAdmin(request: Request, env: Env): Promise<void> {
   await requireSession(request, env);
@@ -133,6 +200,7 @@ export async function adminDelete(request: Request, env: Env, id: string): Promi
   await requireAdmin(request, env);
   await getPanel(env, id);
   await env.DB.prepare("DELETE FROM panels WHERE id = ?1").bind(id).run();
+  await env.DB.prepare("DELETE FROM panel_events WHERE panel_id = ?1").bind(id).run();
   return Response.json({ ok: true });
 }
 
@@ -203,7 +271,10 @@ export async function storeImage(
   const etag = `"${(await sha256hex(bytes)).slice(0, 16)}"`;
   const now = Math.floor(Date.now() / 1000);
   if (etag === row.etag) {
-    if (manual) await env.DB.prepare("UPDATE panels SET mpk_enabled = 0, manual_at = ?1 WHERE id = ?2").bind(now, row.id).run();
+    if (manual) {
+      await env.DB.prepare("UPDATE panels SET mpk_enabled = 0, manual_at = ?1 WHERE id = ?2").bind(now, row.id).run();
+      await logEvent(env, row.id, "upload", { size: bytes.length, changed: false, source: "page" });
+    }
     return { changed: false, etag, size: bytes.length };
   }
   await env.DB.prepare(
@@ -211,6 +282,7 @@ export async function storeImage(
   )
     .bind(bytes, type, etag, bytes.length, now, manual ? 1 : 0, row.id, fresh ? 1 : 0)
     .run();
+  await logEvent(env, row.id, manual ? "upload" : "auto_update", { size: bytes.length, changed: true, source: manual ? "page" : "cron", type });
   return { changed: true, etag, size: bytes.length };
 }
 
@@ -229,18 +301,27 @@ export function pollAfter(env: Env, manualAt: number | null, now = Math.floor(Da
 
 export async function panelImage(request: Request, env: Env, id: string): Promise<Response> {
   const row = await getPanel(env, id);
-  if (!(await roleFor(env, bearer(request), row))) throw unauthorized();
+  if (!(await roleFor(env, bearer(request), row))) {
+    const recent = await env.DB.prepare("SELECT 1 AS x FROM panel_events WHERE panel_id = ?1 AND kind = 'auth_fail' AND at > ?2 LIMIT 1").bind(id, nowS() - 60).first();
+    if (!recent) await logEvent(env, id, "auth_fail", { endpoint: "image" });
+    throw unauthorized();
+  }
   if (!row.etag) throw new RenderError("no image uploaded yet", 404);
+  const poll = pollAfter(env, row.manual_at, undefined, row.fresh_at);
   const headers = {
     ETag: row.etag,
     "Cache-Control": "no-cache",
-    "X-Poll-After": String(pollAfter(env, row.manual_at, undefined, row.fresh_at)),
+    "X-Poll-After": String(poll),
     "Access-Control-Expose-Headers": "ETag, X-Poll-After",
   };
-  if (request.headers.get("If-None-Match") === row.etag) return new Response(null, { status: 304, headers });
+  if (request.headers.get("If-None-Match") === row.etag) {
+    await recordPoll(env, row, 304, request, poll);
+    return new Response(null, { status: 304, headers });
+  }
 
   const r = await env.DB.prepare("SELECT image FROM panels WHERE id = ?1").bind(id).first<{ image: ArrayBuffer | number[] | null }>();
   if (!r?.image) throw new RenderError("no image uploaded yet", 404);
   const bytes = r.image instanceof ArrayBuffer ? new Uint8Array(r.image) : Uint8Array.from(r.image);
+  await recordPoll(env, row, 200, request, poll);
   return new Response(bytes, { headers: { ...headers, "Content-Type": row.content_type ?? "application/octet-stream" } });
 }
