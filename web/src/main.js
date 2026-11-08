@@ -61,7 +61,19 @@ function updateSendButton() {
 }
 
 // ---------------------------------------------------------------- content builders
+// Brightness is baked into the picture (colours are scaled), so it works with any panel and needs no firmware support.
+function brightness() {
+  return clamp(Number($("brightness").value), 5, 100) / 100;
+}
+function dim(c, k) {
+  return (Math.round(((c >> 16) & 255) * k) << 16) | (Math.round(((c >> 8) & 255) * k) << 8) | Math.round((c & 255) * k);
+}
 function gifFrom(frames, delays, bg) {
+  const k = brightness();
+  if (k < 1) {
+    frames = frames.map((f) => Uint32Array.from(f, (c) => dim(c, k)));
+    bg = dim(bg, k);
+  }
   if (frames.length === 1) {
     frames = [frames[0], frames[0]]; // the panel's known-good static GIF is two identical frames
     delays = [1000, 1000];
@@ -113,18 +125,26 @@ function buildLife() {
 
 async function buildBlobs() {
   const minR = Number($("b-min").value);
-  const r = await blobFrames({
-    seed: Number($("b-seed").value) | 0,
-    palette: $("b-palette").value,
-    minR,
-    maxR: Math.max(minR, Number($("b-max").value)),
-    wobble: Number($("b-wobble").value) / 100,
-    animate: $("b-animate").checked,
-  });
+  const mode = $("b-mode").value;
   const delay = clamp(Number($("b-delay").value), 50, 1000);
-  const out = gifFrom(r.frames, r.frames.map((_, i) => (i === r.frames.length - 1 && r.frames.length > 1 ? delay * 8 : delay)), r.bg);
-  out.note = r.count + " blobs";
-  return out;
+  const wanted = Number($("b-step").value);
+  let step = wanted;
+  for (;;) {
+    const r = await blobFrames({
+      seed: Number($("b-seed").value) | 0,
+      palette: $("b-palette").value,
+      minR,
+      maxR: Math.max(minR, Number($("b-max").value)),
+      wobble: Number($("b-wobble").value) / 100,
+      mode,
+      step,
+    });
+    const last = r.frames.length - 1;
+    const out = gifFrom(r.frames, r.frames.map((_, i) => (mode === "appear" && i === last ? delay * 8 : delay)), r.bg);
+    out.note = r.count + " blobs" + (step > wanted ? ", speed raised to " + step + " px/frame to fit 64 KB" : "");
+    if (out.bytes.length <= MAX || mode !== "scroll" || step >= 8) return out;
+    step *= 2; // too big for the panel: move faster, so there are fewer frames
+  }
 }
 
 async function buildFile() {
@@ -172,6 +192,7 @@ async function refresh() {
   current = null;
   $("file-preview").hidden = tab !== "file";
   $("preview").hidden = tab === "file";
+  $("brightness").disabled = tab === "file"; // a ready-made file is sent unchanged
   try {
     if (tab === "file") {
       current = await buildFile();
@@ -335,7 +356,8 @@ for (const b of document.querySelectorAll(".tabs button")) {
   });
 }
 let debounce;
-for (const el of document.querySelectorAll(".pane input, .pane select")) {
+$("brightness").addEventListener("input", () => ($("bright-val").textContent = $("brightness").value + "%"));
+for (const el of document.querySelectorAll(".pane input, .pane select, #brightness")) {
   el.addEventListener("input", () => {
     clearTimeout(debounce);
     debounce = setTimeout(refresh, 200);

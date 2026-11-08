@@ -14,8 +14,8 @@ const loadImage = (url) =>
     img.src = url;
   });
 
-/** opts: { seed, palette, minR, maxR, gap, wobble, animate } (sizes in panel pixels). */
-export async function blobFrames({ seed = 1, palette = "Warm Ceramic", minR = 2, maxR = 7, gap = 1, wobble = 0.08, animate = true }) {
+/** opts: { seed, palette, minR, maxR, gap, wobble, mode: "still" | "appear" | "scroll", step } (sizes in panel pixels; step = panel pixels moved per frame when scrolling). */
+export async function blobFrames({ seed = 1, palette = "Warm Ceramic", minR = 2, maxR = 7, gap = 1, wobble = 0.08, mode = "appear", step = 1 }) {
   const pal = PALETTES[palette] || PALETTES["Warm Ceramic"];
   const host = document.createElement("div");
   host.style.cssText = `position:absolute;left:-99999px;top:0;width:${W * SCALE}px;height:${H * SCALE}px`;
@@ -28,7 +28,7 @@ export async function blobFrames({ seed = 1, palette = "Warm Ceramic", minR = 2,
       minRadius: minR * SCALE,
       maxRadius: Math.max(minR, maxR) * SCALE,
       gap: gap * SCALE,
-      edgeGap: 0,
+      edgeGap: mode === "scroll" ? (gap * SCALE) / 2 : 0, // scrolling wraps around: keep the seam as open as any other gap
       wobble,
       colorVariation: 0,
       fadeIn: false,
@@ -44,17 +44,40 @@ export async function blobFrames({ seed = 1, palette = "Warm Ceramic", minR = 2,
     canvas.height = H * SCALE;
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     const frames = [];
-    const n = animate ? BLOB_FRAMES : 1;
-    for (let f = 0; f < n; f++) {
-      // animation: blobs appear one by one over the first 2/3 of the loop, then hold
-      const t = animate ? Math.min(1, f / (n * 0.66)) : 1;
-      groups.forEach((g, i) => (g.style.display = delays[i] <= t ? "" : "none"));
+    const draw = async () => {
+      groups.forEach((g, i) => (g.style.display = shown(i) ? "" : "none"));
       const url = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(new XMLSerializer().serializeToString(svg));
       const img = await loadImage(url);
       ctx.fillStyle = toHex(pal.bg);
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0);
-      frames.push(quantize(ctx.getImageData(0, 0, canvas.width, canvas.height).data, SCALE, pal));
+    };
+    const read = () => quantize(ctx.getImageData(0, 0, canvas.width, canvas.height).data, SCALE, pal);
+    let shown = () => true;
+    if (mode === "appear") {
+      // blobs appear one by one over the first 2/3 of the loop, then hold
+      for (let f = 0; f < BLOB_FRAMES; f++) {
+        const t = Math.min(1, f / (BLOB_FRAMES * 0.66));
+        shown = (i) => delays[i] <= t;
+        await draw();
+        frames.push(read());
+      }
+    } else if (mode === "scroll") {
+      await draw();
+      const still = document.createElement("canvas");
+      still.width = canvas.width;
+      still.height = canvas.height;
+      still.getContext("2d").drawImage(canvas, 0, 0);
+      const n = Math.max(1, Math.floor(W / Math.max(1, step)));
+      for (let f = 0; f < n; f++) {
+        const dx = Math.round(f * step * SCALE); // moves right; the picture wraps around, so the loop is seamless
+        ctx.drawImage(still, dx, 0);
+        ctx.drawImage(still, dx - canvas.width, 0);
+        frames.push(read());
+      }
+    } else {
+      await draw();
+      frames.push(read());
     }
     return { frames, count: groups.length, bg: pal.bg };
   } finally {
