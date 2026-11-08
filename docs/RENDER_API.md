@@ -70,6 +70,11 @@ Errors are JSON `{ "error": "…" }` with 400 (bad input), 404 (missing frame), 
 
 `id` is 1–32 characters `[a-z0-9-]`. One ESP32 reads one panel; the control page writes to it.
 
+**Faster updates without a persistent connection.** Every `GET /panel/:id/image` answer (200 and 304) carries `X-Poll-After: <seconds>`:
+`3` while the panel changed within the last 180 s (more edits are likely), `30` otherwise. The ESP simply obeys it, so the polling
+policy lives in the Worker and can be tuned without re-flashing. Optional Worker variables: `POLL_BURST_S` (default 3),
+`POLL_IDLE_S` (30), `BURST_WINDOW_S` (180). A `304` costs no D1 write.
+
 ## Panel-specific behaviour built in
 
 - **PNG:** 1-bit indexed when the scene has ≤ 2 colours (~230 B for text), otherwise 8-bit RGB – the two variants tested on hardware.

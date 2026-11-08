@@ -112,26 +112,38 @@ class BufStream : public Stream {
 
 enum class Fetch { Failed, Unchanged, Image };
 
+// One TLS connection is kept open between checks (keep-alive), so a 3 s check does not pay for a handshake each time.
+static WiFiClientSecure tls;
+static HTTPClient http;
+static uint32_t serverPoll = 0;  // seconds the Worker asked us to wait before the next check (X-Poll-After), 0 = none
+
 static Fetch download(uint8_t*& img, size_t& n, String& etag) {
   img = nullptr;
   n = 0;
-  WiFiClientSecure client;
-  client.setInsecure();  // the token still protects the content; the ESP has no certificate store
-  HTTPClient http;
-  http.setTimeout(10000);
-  http.setConnectTimeout(8000);
-  http.setUserAgent("ACT1033-ESP32");
-  if (!http.begin(client, url)) { plog("err", "bad URL"); return Fetch::Failed; }
-  if (token.length()) http.addHeader("Authorization", "Bearer " + token);
-  if (lastEtag.length()) http.addHeader("If-None-Match", lastEtag);
-  const char* wanted[] = {"ETag"};
-  http.collectHeaders(wanted, 1);
+  serverPoll = 0;
+  int code = -1;
   uint32_t t0 = millis();
-  int code = http.GET();
+  for (int attempt = 1; attempt <= 2; attempt++) {  // a stale kept-alive connection fails once; then reconnect
+    http.setReuse(true);
+    http.setTimeout(10000);
+    http.setConnectTimeout(8000);
+    http.setUserAgent("ACT1033-ESP32");
+    if (!http.begin(tls, url)) { plog("err", "bad URL"); return Fetch::Failed; }
+    if (token.length()) http.addHeader("Authorization", "Bearer " + token);
+    if (lastEtag.length()) http.addHeader("If-None-Match", lastEtag);
+    const char* wanted[] = {"ETag", "X-Poll-After"};
+    http.collectHeaders(wanted, 2);
+    code = http.GET();
+    if (code > 0) break;
+    http.end();
+    tls.stop();
+  }
+  if (code > 0) serverPoll = constrain(http.header("X-Poll-After").toInt(), 0, 300);
   if (code == 304) { http.end(); return Fetch::Unchanged; }
   if (code != 200) {
     plog("err", code == 401 ? "token rejected by the Worker (HTTP 401)" : code > 0 ? "worker returned HTTP %d" : "worker unreachable (%d)", code);
     http.end();
+    if (code <= 0) tls.stop();
     return Fetch::Failed;
   }
   etag = http.header("ETag");
@@ -149,19 +161,20 @@ static Fetch download(uint8_t*& img, size_t& n, String& etag) {
   return Fetch::Image;
 }
 
-static void cycle() {
+// Returns false when something failed and a quick retry makes sense.
+static bool cycle() {
   uint8_t* img;
   size_t n;
   String etag;
   Fetch r = download(img, n, etag);
-  if (r == Fetch::Failed) return;  // keep showing what is on the panel
-  if (r == Fetch::Unchanged) { plog("i", "No change (304)"); return; }
+  if (r == Fetch::Failed) return false;  // keep showing what is on the panel
+  if (r == Fetch::Unchanged) { plog("i", "No change (304)"); return true; }
   uint32_t crc = crc32(img, n);
   if (haveLast && crc == lastCrc) {  // same bytes under a different/missing ETag
     plog("i", "Image unchanged - panel not touched");
     lastEtag = etag;
     free(img);
-    return;
+    return true;
   }
   bool ok = false;
   for (int attempt = 1; attempt <= 2 && !ok; attempt++) {
@@ -170,6 +183,7 @@ static void cycle() {
   }
   free(img);
   if (ok) { lastCrc = crc; haveLast = true; lastEtag = etag; }
+  return ok;
 }
 
 // ---------------- serial commands ----------------
@@ -226,6 +240,7 @@ void setup() {
   delay(1500);
   Serial.println("\n=== ESP32-C3 ACT1033_LED (Cloudflare client) ===");
   loadConfig();
+  tls.setInsecure();  // the token still protects the content; the ESP has no certificate store
   panel.begin(panelAddr);
   if (connectWifi()) Serial.printf("Wi-Fi OK, IP %s\n", WiFi.localIP().toString().c_str());
   else Serial.println("No Wi-Fi. Set it with:  wifi <ssid> <password>");
@@ -236,15 +251,18 @@ void setup() {
 void loop() {
   handleSerial();
 
-  static uint32_t downSince = 0, hint = 0;
+  static uint32_t downSince = 0, hint = 0, lastLoggedPoll = 0xFFFFFFFF;
   if (WiFi.status() == WL_CONNECTED) {
     downSince = 0;
     if (!url.length() || !token.length()) {
       if (millis() - hint > 15000) { hint = millis(); Serial.println("Not configured: set url and token (see 'help')."); }
     } else if (due || (int32_t)(millis() - nextAt) >= 0) {
       due = false;
-      nextAt = millis() + ivSec * 1000;
-      cycle();
+      bool ok = cycle();
+      // The Worker decides: a few seconds right after a change (more edits likely), `iv` when idle. 10 s retry on errors.
+      uint32_t wait = !ok ? min<uint32_t>(ivSec, 10) : serverPoll ? serverPoll : ivSec;
+      nextAt = millis() + wait * 1000;
+      if (ok && serverPoll != lastLoggedPoll) { lastLoggedPoll = serverPoll; plog("i", "Worker asks for a check every %u s", (unsigned)wait); }
     }
   } else if (haveCreds()) {
     if (!downSince) downSince = millis();

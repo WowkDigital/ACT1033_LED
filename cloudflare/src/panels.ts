@@ -9,6 +9,10 @@ export interface Env {
   ADMIN_TOKEN?: string;
   /** optional var: restrict CORS to the site's origin, e.g. https://you.github.io (default *) */
   ALLOWED_ORIGIN?: string;
+  /** optional vars (seconds): how often the ESP should poll when idle / right after a change, and how long "right after" lasts */
+  POLL_IDLE_S?: string;
+  POLL_BURST_S?: string;
+  BURST_WINDOW_S?: string;
 }
 
 export const MAX_IMAGE = 64 * 1024;
@@ -176,11 +180,25 @@ export async function panelPut(request: Request, env: Env, id: string): Promise<
   return Response.json({ ok: true, changed: true, etag, size: body.length });
 }
 
+/** Seconds the ESP should wait before its next check: short right after a change (more edits are likely), long when idle. */
+export function pollAfter(env: Env, updatedAt: number | null, now = Math.floor(Date.now() / 1000)): number {
+  const num = (v: string | undefined, d: number) => (v !== undefined && Number.isFinite(Number(v)) && Number(v) > 0 ? Math.floor(Number(v)) : d);
+  const idle = num(env.POLL_IDLE_S, 30);
+  const burst = num(env.POLL_BURST_S, 3);
+  const window = num(env.BURST_WINDOW_S, 180);
+  return updatedAt !== null && now - updatedAt < window ? burst : idle;
+}
+
 export async function panelImage(request: Request, env: Env, id: string): Promise<Response> {
   const row = await getPanel(env, id);
   if (!(await roleFor(env, bearer(request), row))) throw unauthorized();
   if (!row.etag) throw new RenderError("no image uploaded yet", 404);
-  const headers = { ETag: row.etag, "Cache-Control": "no-cache", "Access-Control-Expose-Headers": "ETag" };
+  const headers = {
+    ETag: row.etag,
+    "Cache-Control": "no-cache",
+    "X-Poll-After": String(pollAfter(env, row.updated_at)),
+    "Access-Control-Expose-Headers": "ETag, X-Poll-After",
+  };
   if (request.headers.get("If-None-Match") === row.etag) return new Response(null, { status: 304, headers });
 
   const r = await env.DB.prepare("SELECT image FROM panels WHERE id = ?1").bind(id).first<{ image: ArrayBuffer | number[] | null }>();

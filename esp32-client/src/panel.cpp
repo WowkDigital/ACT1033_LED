@@ -87,9 +87,15 @@ bool Panel::findPanel(NimBLEAdvertisedDevice& out) {
   return false;
 }
 
+// Timing of the last BLE upload (ms), logged at the end of send()
+static uint32_t tScan, tConn, tHand, tSend;
+
 bool Panel::connect() {
   NimBLEAdvertisedDevice dev;
+  uint32_t t0 = millis();
   if (!findPanel(dev)) return false;
+  tScan = millis() - t0;
+  t0 = millis();
 
   cli_ = NimBLEDevice::createClient();
   cli_->setConnectTimeout(6);
@@ -124,6 +130,7 @@ bool Panel::connect() {
   // The CCCD write must be acknowledged - otherwise the panel sends no notifications.
   if (!nf->subscribe(true, onNotify, true)) plog("err", "Notification subscribe failed");
   delay(300);
+  tConn = millis() - t0;
   return true;
 }
 
@@ -150,21 +157,31 @@ bool Panel::write(const uint8_t* data, size_t len) {
 }
 
 bool Panel::handshake() {
+  uint32_t t0 = millis();
   wr_->writeValue(HS1, sizeof(HS1), false);
   if (!waitFlag(fStage1, 5000)) plog("err", "handshake 1: no reply (continuing)");
   delay(200);
   wr_->writeValue(HS2, sizeof(HS2), false);
   if (!waitFlag(fStage2, 5000)) plog("err", "handshake 2: no reply (continuing)");
   delay(200);
+  tHand = millis() - t0;
   return true;
 }
 
 bool Panel::send(uint8_t* buf, size_t len) {
   fStage1 = fStage2 = fAck = fDone = false;
-  if (len > 6 && memcmp(buf, "GIF8", 4) == 0) return sendGif(buf, len);
-  if (len > 8 && buf[0] == 0x89 && memcmp(buf + 1, "PNG", 3) == 0) return sendPng(buf, len);
-  plog("err", "Not a GIF or PNG file");
-  return false;
+  tScan = tConn = tHand = tSend = 0;
+  uint32_t t0 = millis();
+  bool ok;
+  if (len > 6 && memcmp(buf, "GIF8", 4) == 0) ok = sendGif(buf, len);
+  else if (len > 8 && buf[0] == 0x89 && memcmp(buf + 1, "PNG", 3) == 0) ok = sendPng(buf, len);
+  else { plog("err", "Not a GIF or PNG file"); return false; }
+  uint32_t total = millis() - t0;
+  // whatever is left after scan, connect and handshake is the upload itself plus the confirmation wait and disconnect
+  tSend = total > tScan + tConn + tHand ? total - tScan - tConn - tHand : 0;
+  plog("i", "BLE timing: scan %u ms, connect %u ms, handshake %u ms, upload+confirm %u ms, total %u ms", (unsigned)tScan,
+       (unsigned)tConn, (unsigned)tHand, (unsigned)tSend, (unsigned)total);
+  return ok;
 }
 
 bool Panel::sendPng(const uint8_t* png, size_t n) {

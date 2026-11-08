@@ -33,13 +33,14 @@ curl -X POST https://<your-worker>/admin/panels \
 The answer contains `write_token` (for the control page) and `read_token` (for the ESP) – **shown only once**. Give each person
 a panel of their own; lost tokens can be replaced with `POST /admin/panels/<id>/rotate`.
 
+Optional vars: `POLL_BURST_S`, `POLL_IDLE_S`, `BURST_WINDOW_S` tune how fast the ESP checks after a change (see the API doc).
 Optional: set the variable `ALLOWED_ORIGIN` (e.g. `https://<you>.github.io`) in `wrangler.local.jsonc` under `"vars"` to
 restrict CORS to your control page.
 
 ## Development
 
 ```bash
-npm test                    # 12 tests, in-memory SQLite stands in for D1
+npm test                    # 14 tests, in-memory SQLite stands in for D1
 npm run check               # tsc --noEmit
 npm run dev                 # wrangler dev (uses wrangler.local.jsonc)
 python tools/gen_font.py    # regenerate src/font.ts after editing python/act1033led/font.py

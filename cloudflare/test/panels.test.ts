@@ -73,6 +73,30 @@ test("download with read token, ETag and 304", async () => {
   assert.equal((await call("/panel/garage/image", { token: garage.read_token })).status, 404);
 });
 
+test("X-Poll-After: short right after a change, long when idle, on 200 and 304", async () => {
+  const get = (etag?: string) =>
+    call("/panel/kitchen/image", { token: kitchen.read_token, headers: etag ? { "If-None-Match": etag } : {} });
+  const fresh = await get();
+  assert.equal(fresh.headers.get("x-poll-after"), "3");
+  const etag = fresh.headers.get("etag")!;
+  assert.equal((await get(etag)).headers.get("x-poll-after"), "3"); // 304 carries it too
+  await env.DB.prepare("UPDATE panels SET updated_at = ?1 WHERE id = 'kitchen'").bind(Math.floor(Date.now() / 1000) - 1000).run();
+  const idle = await get(etag);
+  assert.equal(idle.status, 304);
+  assert.equal(idle.headers.get("x-poll-after"), "30");
+  await env.DB.prepare("UPDATE panels SET updated_at = ?1 WHERE id = 'kitchen'").bind(Math.floor(Date.now() / 1000)).run();
+});
+
+test("pollAfter honours the optional vars", async () => {
+  const { pollAfter } = await import("../src/panels.ts");
+  const now = 10_000;
+  assert.equal(pollAfter({ DB: env.DB }, now - 10, now), 3);
+  assert.equal(pollAfter({ DB: env.DB }, now - 500, now), 30);
+  assert.equal(pollAfter({ DB: env.DB }, null, now), 30);
+  assert.equal(pollAfter({ DB: env.DB, POLL_BURST_S: "2", POLL_IDLE_S: "60", BURST_WINDOW_S: "600" }, now - 500, now), 2);
+  assert.equal(pollAfter({ DB: env.DB, POLL_BURST_S: "junk" }, now - 10, now), 3);
+});
+
 test("any panel token unlocks /render; rotate invalidates the old token", async () => {
   assert.equal((await call("/render?text=A", { token: kitchen.read_token })).status, 200);
   const rot = (await (await call("/admin/panels/kitchen/rotate", { method: "POST", token: ADMIN, body: JSON.stringify({ which: "read" }) })).json()) as {

@@ -9,7 +9,8 @@ A thin bridge: the ESP32-C3 joins Wi-Fi, downloads the panel's current **finishe
  (../web, GitHub Pages)                                                                (this firmware)
 ```
 
-Every `iv` seconds (default 30) the ESP asks the Worker for the image. `304 Not Modified` means nothing to do; otherwise the new
+Every few seconds the ESP asks the Worker for the image: the Worker's `X-Poll-After` header sets the pace (3 s for 3 minutes after a change,
+`iv` seconds - default 30 - when idle), and one TLS connection is kept open between checks. `304 Not Modified` means nothing to do; otherwise the new
 file is uploaded to the panel (bytes identical to the last confirmed file are skipped by CRC32). A failed download keeps the
 current picture.
 The panel protocol is described in [../docs/PROTOCOL.md](../docs/PROTOCOL.md).
@@ -45,6 +46,13 @@ Everything is stored in the ESP's flash (NVS) – **nothing secret is compiled i
 
 Each check sends `If-None-Match` with the last ETag; the Worker answers `304` when nothing changed, so an idle ESP downloads nothing.
 Opening the serial port resets the ESP. Set up the Worker and create a panel first: [../cloudflare/README.md](../cloudflare/README.md).
+
+## Latency
+
+Measured on the real panel (RSSI about −75 dBm): a change uploaded to the Worker is downloaded by the ESP after ≈3 s
+(the burst poll interval) and confirmed by the panel ≈7 s after the upload. The BLE part takes ≈3.5–4.5 s: scan ≈0.2 s, connect ≈1.7–2 s,
+handshake ≈0.45 s, upload + confirmation ≈1.1 s for 10 KB (≈2.1 s for 29 KB). Each upload logs this breakdown on the serial port.
+About 1.4 s of it are fixed `delay()`s in `panel.cpp` that could be trimmed.
 
 ## Hardware notes
 

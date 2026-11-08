@@ -207,7 +207,7 @@ async function send() {
     const res = await fetch(c.url, { method: "PUT", headers: c.auth, body: current.bytes });
     if (!res.ok) return say("send-status", await explain(res), "err");
     const j = await res.json();
-    say("send-status", j.changed ? "Sent " + j.size + " B. The ESP will show it at its next check." : "Identical to the current picture; nothing to do.", "ok");
+    say("send-status", j.changed ? "Sent " + j.size + " B. The ESP picks it up within a few seconds." : "Identical to the current picture; nothing to do.", "ok");
     persist();
   } catch (e) {
     say("send-status", e instanceof TypeError ? "Cannot reach the Worker (check the URL; CORS or network)" : e.message, "err");
