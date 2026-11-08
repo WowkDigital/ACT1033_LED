@@ -5,7 +5,7 @@ a scene description here and gets back a finished **PNG** or **GIF** that the pa
 (see [PROTOCOL.md](PROTOCOL.md)).
 
 Base URL: your own Worker, e.g. `https://act1033-led.<your-subdomain>.workers.dev` (see [../cloudflare/README.md](../cloudflare/README.md)).
-CORS enabled. **Every endpoint except `/health` and `/` needs a token**: `Authorization: Bearer <token>`.
+CORS is limited to the pages listed in the `ALLOWED_ORIGIN` variable (any page when unset, see [../cloudflare/README.md](../cloudflare/README.md)). **Every endpoint except `/health` and `/` needs a token**: `Authorization: Bearer <token>`.
 
 | Token | Who holds it | Allowed |
 |---|---|---|

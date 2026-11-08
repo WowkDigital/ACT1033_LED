@@ -24,14 +24,23 @@ import { mpkRoute, runAll } from "./mpk.ts";
 import { render } from "./render.ts";
 import { RenderError, type Element, type Spec } from "./types.ts";
 
-function corsHeaders(env: Env): Record<string, string> {
-  return {
-    "Access-Control-Allow-Origin": env.ALLOWED_ORIGIN || "*",
+/**
+ * CORS. ALLOWED_ORIGIN is empty or "*" (any page), or a comma-separated list of origins, e.g. "https://you.github.io".
+ * With a list, only a request whose Origin is on it gets Access-Control-Allow-Origin (echoed back), so other websites cannot
+ * call the Worker from a browser. This is browser-enforced only: tokens remain the real protection (ESP and curl are unaffected).
+ */
+export function corsHeaders(request: Request, env: Env): Record<string, string> {
+  const h: Record<string, string> = {
     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Authorization, Content-Type, If-None-Match",
-    "Access-Control-Expose-Headers": "ETag, X-Frames, X-Width, X-Height, X-Size",
+    "Access-Control-Expose-Headers": "ETag, X-Poll-After, X-Frames, X-Width, X-Height, X-Size",
     Vary: "Origin",
   };
+  const allowed = (env.ALLOWED_ORIGIN ?? "").split(",").map((o) => o.trim().replace(/\/+$/, "")).filter(Boolean);
+  const origin = request.headers.get("Origin");
+  if (allowed.length === 0 || allowed.includes("*")) h["Access-Control-Allow-Origin"] = "*";
+  else if (origin && allowed.includes(origin)) h["Access-Control-Allow-Origin"] = origin;
+  return h;
 }
 
 const USAGE = {
@@ -139,7 +148,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const cors = corsHeaders(env);
+    const cors = corsHeaders(request, env);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
     let res: Response;
     try {

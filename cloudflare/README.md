@@ -38,8 +38,16 @@ Wrocław transit API) says where departures come from; the compatibility flag `g
 Worker of your own account through its public `workers.dev` address.
 
 Optional vars: `POLL_BURST_S`, `POLL_IDLE_S`, `BURST_WINDOW_S` tune how fast the ESP checks after a change (see the API doc).
-Optional: set the variable `ALLOWED_ORIGIN` (e.g. `https://<you>.github.io`) in `wrangler.local.jsonc` under `"vars"` to
-restrict CORS to your control page.
+**Limit browser access to your control page** (recommended):
+
+```bash
+npm run setup -- --origin https://<you>.github.io
+# several pages (e.g. for local development): --origin "https://<you>.github.io,http://localhost:8080"
+```
+
+The list is stored in `wrangler.local.jsonc` (`vars.ALLOWED_ORIGIN`) and remembered by later `npm run setup` runs; no value or `*` means any page.
+Only a request from a listed origin gets CORS headers, so other websites cannot use the Worker from a browser. This is enforced by browsers only - the
+**tokens are the real protection**, and the ESP32 and `curl` are not affected by CORS.
 
 ## Development
 

@@ -116,6 +116,14 @@ test("delete panel; CORS headers present", async () => {
   const pre = await call("/panel/kitchen", { method: "OPTIONS" });
   assert.equal(pre.status, 204);
   assert.match(pre.headers.get("access-control-allow-headers")!, /Authorization/);
-  const restricted = await worker.fetch(new Request("https://x/health"), { DB: makeDb(), ALLOWED_ORIGIN: "https://me.github.io" });
-  assert.equal(restricted.headers.get("access-control-allow-origin"), "https://me.github.io");
+  const restricted = { DB: makeDb(), ALLOWED_ORIGIN: "https://me.github.io, http://localhost:8080/" };
+  const from = (origin?: string, method = "GET") => worker.fetch(new Request("https://x/health", { method, headers: origin ? { Origin: origin } : {} }), restricted);
+  assert.equal((await from("https://me.github.io")).headers.get("access-control-allow-origin"), "https://me.github.io");
+  assert.equal((await from("http://localhost:8080")).headers.get("access-control-allow-origin"), "http://localhost:8080"); // trailing slash in the list is ignored
+  assert.equal((await from("https://evil.example")).headers.get("access-control-allow-origin"), null);
+  assert.equal((await from("https://evil.example", "OPTIONS")).headers.get("access-control-allow-origin"), null);
+  assert.equal((await from()).headers.get("access-control-allow-origin"), null);
+  assert.equal((await from("https://evil.example")).status, 200, "the request itself still works (CORS is browser-side); tokens protect the data");
+  const open = await worker.fetch(new Request("https://x/health", { headers: { Origin: "https://anything.example" } }), { DB: makeDb() });
+  assert.equal(open.headers.get("access-control-allow-origin"), "*");
 });

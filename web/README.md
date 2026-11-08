@@ -12,6 +12,12 @@ The ESP32 then downloads it at its next check. The **Departures** tab instead se
 - The renderer is the **same code as the Worker's** (`../cloudflare/src`), bundled by esbuild, so previews match what the Worker would produce.
   Game of Life is verified frame-for-frame against the Python implementation (`npm test`).
 
+## CORS
+
+The Worker only answers browsers from the origins in its `ALLOWED_ORIGIN` variable. If the page says it cannot reach the Worker, check that
+your page's origin (e.g. `https://<you>.github.io`, or `http://localhost:8080` while developing) is in that list:
+`npm run setup -- --origin "https://<you>.github.io,http://localhost:8080"` in `cloudflare/`.
+
 ## Develop
 
 ```bash

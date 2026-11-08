@@ -1,5 +1,7 @@
 // One-shot setup of your own Worker: D1 database -> migrations -> deploy -> ADMIN_TOKEN secret.
-// Usage: npx wrangler login && npm install && npm run setup
+// Usage: npx wrangler login && npm install && npm run setup [-- --origin https://you.github.io]
+//   --origin (or env ALLOWED_ORIGIN): comma-separated list of web origins allowed to call the Worker from a browser. Remembered in
+//   wrangler.local.jsonc for later runs; "*" or nothing = any page.
 // Writes wrangler.local.jsonc (your D1 id, git-ignored) and .admin-token (git-ignored) - never commit either.
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -45,6 +47,21 @@ else {
 
 const cfg = JSON.parse(readFileSync("wrangler.jsonc", "utf8").replace(/^﻿/, ""));
 cfg.d1_databases[0].database_id = id;
+
+// allowed web origin: --origin <list> > env ALLOWED_ORIGIN > what the previous run stored
+const argIdx = process.argv.indexOf("--origin");
+let origin = argIdx > -1 ? process.argv[argIdx + 1] : process.env.ALLOWED_ORIGIN;
+if (origin === undefined && existsSync(LOCAL)) {
+  try {
+    origin = JSON.parse(readFileSync(LOCAL, "utf8").replace(/^﻿/, "")).vars?.ALLOWED_ORIGIN;
+  } catch {
+    /* ignore a broken local file; it is rewritten below */
+  }
+}
+if (origin) {
+  cfg.vars = { ...(cfg.vars ?? {}), ALLOWED_ORIGIN: origin };
+  console.log("browser access limited to: " + origin);
+} else console.log("browser access: any page (set --origin to restrict it)");
 writeFileSync(LOCAL, JSON.stringify(cfg, null, 2) + "\n");
 console.log("wrote " + LOCAL);
 

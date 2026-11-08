@@ -86,5 +86,5 @@ ACT1033_LED/
 
 ## License
 
-No license has been chosen yet – add a `LICENSE` file before publishing. The BLE protocol was worked out from the
-open-source BK-Light project and from testing on a real panel (tested panel: 64×16, `LED_BLE_xxxxxxxx`, ACT1025 variant).
+[MIT](LICENSE). The BLE protocol notes in [docs/PROTOCOL.md](docs/PROTOCOL.md) were worked out from the open-source BK-Light
+project and from testing on a real panel (tested panel: 64×16, `LED_BLE_xxxxxxxx`, ACT1025 variant).
