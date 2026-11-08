@@ -12,6 +12,14 @@ The ESP32 then downloads it at its next check. The **Departures** tab instead se
 - The renderer is the **same code as the Worker's** (`../cloudflare/src`), bundled by esbuild, so previews match what the Worker would produce.
   Game of Life is verified frame-for-frame against the Python implementation (`npm test`).
 
+## Admin page
+
+`admin/` (on GitHub Pages: `https://<you>.github.io/ACT1033_LED/admin/`) manages panels entirely in the browser: sign in with the admin
+password, then list panels, create one (own ID or generated), rotate the write/read token, delete a panel, rotate or delete everything,
+change the password or sign out everywhere. The password is checked by the Worker (PBKDF2 hash in D1) and exchanged for an 8-hour session
+token kept in `sessionStorage` only. New tokens are displayed once – the Worker keeps only their hashes.
+First run: the page asks for the Worker's one-time `SETUP_TOKEN` secret and lets you choose the password.
+
 ## CORS
 
 The Worker only answers browsers from the origins in its `ALLOWED_ORIGIN` variable. If the page says it cannot reach the Worker, check that

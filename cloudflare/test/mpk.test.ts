@@ -3,9 +3,10 @@ import assert from "node:assert/strict";
 import worker from "../src/index.ts";
 import { formatRemaining, needsRegen, parseConfig, renderCountdown, renderRows, runAll, toDeps, type Dep } from "../src/mpk.ts";
 import { makeDb } from "./d1shim.ts";
+import { adminSession, SETUP_TOKEN } from "./session.ts";
 
-const ADMIN = "admin-secret";
-const env = { DB: makeDb(), ADMIN_TOKEN: ADMIN, TRANSIT_URL: "https://transit.test" };
+const env = { DB: makeDb(), SETUP_TOKEN, TRANSIT_URL: "https://transit.test" };
+const ADMIN = await adminSession(env);
 const call = (path: string, init: RequestInit & { token?: string } = {}) => {
   const { token, ...rest } = init;
   const headers = { ...(rest.headers as Record<string, string>), ...(token ? { Authorization: "Bearer " + token } : {}) };

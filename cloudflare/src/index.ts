@@ -5,9 +5,11 @@
 //            PUT /panel/:id                         (panel write token)   upload a GIF/PNG
 //            GET /panel/:id/image                   (panel read token)    download it (ETag / 304)
 //            GET /panel/:id                         (any panel token)     metadata
-//   admin:   POST|GET /admin/panels                 (ADMIN_TOKEN)         create / list
-//            DELETE /admin/panels/:id | POST /admin/panels/:id/rotate
+//   admin:   POST /admin/setup | /admin/login      (password -> session token, see admin.ts)
+//            POST|GET /admin/panels                 (session)             create / list
+//            DELETE /admin/panels/:id | POST /admin/panels/:id/rotate | POST /admin/reset
 
+import { adminAuthRoute } from "./admin.ts";
 import { bearer } from "./auth.ts";
 import {
   adminCreate,
@@ -53,8 +55,9 @@ const USAGE = {
     "GET /panel/:id/image": "download the current image, supports If-None-Match (read token)",
     "GET /panel/:id": "metadata",
     "GET|PUT|DELETE /panel/:id/mpk": "departures job: show the next departures from a stop, refreshed every minute by a cron trigger",
-    "POST|GET /admin/panels": "create / list panels (ADMIN_TOKEN)",
-    "DELETE /admin/panels/:id, POST /admin/panels/:id/rotate": "delete / rotate tokens (ADMIN_TOKEN)",
+    "POST /admin/login": "password -> admin session token (8 h)",
+    "POST|GET /admin/panels": "create / list panels (admin session)",
+    "DELETE /admin/panels/:id, POST /admin/panels/:id/rotate, POST /admin/reset": "delete / rotate tokens (admin session)",
     "GET /health": "liveness probe",
   },
 };
@@ -114,6 +117,9 @@ async function handle(request: Request, env: Env): Promise<Response> {
       },
     });
   }
+
+  const auth = await adminAuthRoute(request, env, path);
+  if (auth) return auth;
 
   if (path === "/admin/panels") {
     if (method === "POST") return adminCreate(request, env);

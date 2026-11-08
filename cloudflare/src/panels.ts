@@ -1,12 +1,13 @@
 // Panel API backed by D1: admin management, image upload (write token) and download (read token).
 
+import { isAdminSession, requireSession } from "./admin.ts";
 import { bearer, randomToken, safeEqual, sha256hex } from "./auth.ts";
 import { RenderError } from "./types.ts";
 
 export interface Env {
   DB: D1Database;
-  /** secret: full control (create / delete panels, write to any panel) */
-  ADMIN_TOKEN?: string;
+  /** secret: one-time token that allows setting the first admin password from the web (see admin.ts) */
+  SETUP_TOKEN?: string;
   /** optional var: restrict CORS to the site's origin, e.g. https://you.github.io (default *) */
   ALLOWED_ORIGIN?: string;
   /** optional vars (seconds): how often the ESP should poll when idle / right after a change, and how long "right after" lasts */
@@ -49,10 +50,7 @@ const COLUMNS =
 
 export type Role = "admin" | "write" | "read" | null;
 
-export async function isAdmin(env: Env, token: string | null): Promise<boolean> {
-  if (!token || !env.ADMIN_TOKEN) return false;
-  return safeEqual(await sha256hex(token), await sha256hex(env.ADMIN_TOKEN));
-}
+export const isAdmin = isAdminSession;
 
 export async function roleFor(env: Env, token: string | null, row: PanelRow): Promise<Role> {
   if (!token) return null;
@@ -98,8 +96,7 @@ function meta(row: PanelRow) {
 
 // ---------------------------------------------------------------- admin
 async function requireAdmin(request: Request, env: Env): Promise<void> {
-  if (!env.ADMIN_TOKEN) throw new RenderError("ADMIN_TOKEN is not configured on this Worker", 503);
-  if (!(await isAdmin(env, bearer(request)))) throw unauthorized();
+  await requireSession(request, env);
 }
 
 export async function adminCreate(request: Request, env: Env): Promise<Response> {

@@ -4,6 +4,7 @@ import { render } from "../src/render.ts";
 import { crc32 } from "../src/encode.ts";
 import worker from "../src/index.ts";
 import { makeDb } from "./d1shim.ts";
+import { adminSession, SETUP_TOKEN } from "./session.ts";
 
 test("PNG has valid signature and 64x16 header, 1-bit for 2 colours", () => {
   const r = render({ elements: [{ type: "text", text: "Hi", color: "#ff0000" }] });
@@ -58,8 +59,8 @@ test("validation errors", () => {
 });
 
 test("HTTP: /render needs a token; GET and POST work with it", async () => {
-  const env = { DB: makeDb(), ADMIN_TOKEN: "admin-secret" };
-  const auth = { Authorization: "Bearer admin-secret" };
+  const env = { DB: makeDb(), SETUP_TOKEN };
+  const auth = { Authorization: "Bearer " + (await adminSession(env)) };
   assert.equal((await worker.fetch(new Request("https://x/render?text=Test"), env)).status, 401);
   assert.equal((await worker.fetch(new Request("https://x/render?text=Test", { headers: { Authorization: "Bearer nope" } }), env)).status, 401);
   const g = await worker.fetch(new Request("https://x/render?text=Test&format=gif&anim=blink", { headers: auth }), env);

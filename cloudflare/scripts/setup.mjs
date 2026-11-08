@@ -1,8 +1,8 @@
-// One-shot setup of your own Worker: D1 database -> migrations -> deploy -> ADMIN_TOKEN secret.
+// One-shot setup of your own Worker: D1 database -> migrations -> deploy -> SETUP_TOKEN secret.
 // Usage: npx wrangler login && npm install && npm run setup [-- --origin https://you.github.io]
 //   --origin (or env ALLOWED_ORIGIN): comma-separated list of web origins allowed to call the Worker from a browser. Remembered in
 //   wrangler.local.jsonc for later runs; "*" or nothing = any page.
-// Writes wrangler.local.jsonc (your D1 id, git-ignored) and .admin-token (git-ignored) - never commit either.
+// Writes wrangler.local.jsonc (your D1 id, git-ignored) and .setup-token (git-ignored) - never commit either.
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -75,18 +75,17 @@ const dep = wrangler(["deploy", "-c", LOCAL]);
 if (!dep.ok) fail("deploy failed", dep.out);
 console.log(dep.out.trim().split("\n").slice(-4).join("\n"));
 
-step("Checking the ADMIN_TOKEN secret");
+step("Checking the SETUP_TOKEN secret");
 const secrets = wrangler(["secret", "list", "--format", "json", "-c", LOCAL]);
-const has = secrets.ok && secrets.out.includes('"ADMIN_TOKEN"');
-if (has) console.log("ADMIN_TOKEN already set - keeping it.");
+const has = secrets.ok && secrets.out.includes('"SETUP_TOKEN"');
+if (has) console.log("SETUP_TOKEN already set - keeping it.");
 else {
-  const token = "a_" + randomBytes(32).toString("base64url");
-  const put = wrangler(["secret", "put", "ADMIN_TOKEN", "-c", LOCAL], token);
-  if (!put.ok) fail("could not set ADMIN_TOKEN", put.out);
-  writeFileSync(".admin-token", token + "\n");
-  console.log("ADMIN_TOKEN generated and stored as a Worker secret.");
-  console.log("A copy is in cloudflare/.admin-token (git-ignored). Keep it private; it controls every panel.");
+  const token = "k_" + randomBytes(24).toString("base64url");
+  const put = wrangler(["secret", "put", "SETUP_TOKEN", "-c", LOCAL], token);
+  if (!put.ok) fail("could not set SETUP_TOKEN", put.out);
+  writeFileSync(".setup-token", token + "\n");
+  console.log("SETUP_TOKEN generated and stored as a Worker secret (copy in cloudflare/.setup-token, git-ignored).");
 }
 
-console.log("\nDone. Create your first panel (replace <worker-url> and the token):");
-console.log('  curl -X POST <worker-url>/admin/panels -H "Authorization: Bearer <ADMIN_TOKEN>" -d \'{"id":"kitchen","name":"Kitchen"}\'');
+console.log("\nDone. Open the admin page (web/admin/ on your GitHub Pages site), enter the Worker URL and the setup token,");
+console.log("choose the admin password - then create panels in the browser. The setup token is only needed once.");

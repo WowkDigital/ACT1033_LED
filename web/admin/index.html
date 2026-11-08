@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>ACT1033 LED admin</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<main>
+  <h1>Panel admin</h1>
+  <p class="lead">Create panels, rotate their tokens and delete them on your own Worker. <a href="../">Back to the control page</a></p>
+
+  <section id="sec-worker">
+    <h2>Worker</h2>
+    <label>Worker URL <input id="worker" type="url" placeholder="https://act1033-led.your-name.workers.dev" autocomplete="off" spellcheck="false"></label>
+    <div class="row actions"><span></span><button id="connect" type="button">Connect</button></div>
+    <p id="conn-status" class="status" role="status"></p>
+  </section>
+
+  <section id="sec-setup" hidden>
+    <h2>First run: set the admin password</h2>
+    <p class="hint">No password exists yet. Enter the one-time setup token (the Worker's <code>SETUP_TOKEN</code> secret) and choose a password of at least 10 characters.</p>
+    <label>Setup token <input id="s-token" type="password" autocomplete="off" spellcheck="false"></label>
+    <label>New password <input id="s-pass" type="password" autocomplete="new-password" minlength="10"></label>
+    <label>Repeat password <input id="s-pass2" type="password" autocomplete="new-password" minlength="10"></label>
+    <div class="row actions"><span></span><button id="setup" type="button" class="primary">Set password and sign in</button></div>
+    <p id="setup-status" class="status" role="status"></p>
+  </section>
+
+  <section id="sec-login" hidden>
+    <h2>Sign in</h2>
+    <label>Admin password <input id="l-pass" type="password" autocomplete="current-password"></label>
+    <div class="row actions"><span></span><button id="login" type="button" class="primary">Sign in</button></div>
+    <p id="login-status" class="status" role="status"></p>
+  </section>
+
+  <div id="dash" hidden>
+    <section>
+      <h2>New panel</h2>
+      <div class="row">
+        <label>Panel ID (optional) <input id="n-id" placeholder="kitchen" maxlength="32" autocomplete="off" spellcheck="false"></label>
+        <label>Name (optional) <input id="n-name" placeholder="Kitchen" maxlength="60" autocomplete="off"></label>
+      </div>
+      <p class="hint">ID: a-z, 0-9 and “-”, 1–32 characters, starts with a letter or digit. Left empty, one is generated. It cannot be changed later.</p>
+      <div class="row actions"><span></span><button id="create" type="button" class="primary">Create panel</button></div>
+      <p id="create-status" class="status" role="status"></p>
+    </section>
+
+    <section id="tok-box" hidden>
+      <h2>Tokens (shown only once)</h2>
+      <p class="hint">Copy them now: the Worker stores only hashes. <b>write</b> goes into the control page, <b>read</b> into the ESP32.</p>
+      <p id="tok-title" class="status"></p>
+      <div id="tok-list"></div>
+      <div class="row actions">
+        <button id="copy-all" type="button" class="secondary">Copy all</button>
+        <button id="tok-close" type="button">I saved them – hide</button>
+      </div>
+      <p id="copy-status" class="status" role="status"></p>
+    </section>
+
+    <section>
+      <h2>Panels</h2>
+      <p id="list-status" class="status" role="status"></p>
+      <div id="panels"></div>
+    </section>
+
+    <section>
+      <h2>Account</h2>
+      <div class="row">
+        <label>Current password <input id="p-old" type="password" autocomplete="current-password"></label>
+        <label>New password (min. 10) <input id="p-new" type="password" autocomplete="new-password" minlength="10"></label>
+      </div>
+      <div class="row actions">
+        <span>
+          <button id="logout" type="button" class="secondary">Sign out</button>
+          <button id="logout-all" type="button" class="secondary">Sign out everywhere</button>
+        </span>
+        <button id="change-pass" type="button">Change password</button>
+      </div>
+      <p id="acct-status" class="status" role="status"></p>
+    </section>
+
+    <section>
+      <h2>Danger zone</h2>
+      <p class="hint">Rotating gives every panel brand-new tokens (shown once); deleting removes every panel, its image and its departures job. ESP32 devices and the control page stop working until you give them the new values.</p>
+      <div class="row actions">
+        <button id="reset-tokens" type="button" class="danger">Rotate all tokens</button>
+        <button id="reset-all" type="button" class="danger">Delete all panels</button>
+      </div>
+      <p id="reset-status" class="status" role="status"></p>
+    </section>
+  </div>
+</main>
+<script type="module" src="../admin.js"></script>
+</body>
+</html>

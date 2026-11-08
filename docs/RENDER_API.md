@@ -9,7 +9,7 @@ CORS is limited to the pages listed in the `ALLOWED_ORIGIN` variable (any page w
 
 | Token | Who holds it | Allowed |
 |---|---|---|
-| admin (`ADMIN_TOKEN`, a Worker secret) | the Worker's owner | everything, incl. creating panels |
+| admin session (`s_…`, from `POST /admin/login` `{"password":…}`, valid 8 h) | the Worker's owner | everything, incl. creating panels |
 | panel write token (`w_…`) | the control page | upload to its panel, `/render` |
 | panel read token (`r_…`) | the ESP32 | download from its panel, `/render` |
 

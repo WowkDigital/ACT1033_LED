@@ -3,9 +3,10 @@ import assert from "node:assert/strict";
 import worker from "../src/index.ts";
 import { render } from "../src/render.ts";
 import { makeDb } from "./d1shim.ts";
+import { adminSession, PASSWORD, SETUP_TOKEN } from "./session.ts";
 
-const ADMIN = "admin-secret";
-const env = { DB: makeDb(), ADMIN_TOKEN: ADMIN };
+const env = { DB: makeDb(), SETUP_TOKEN };
+let ADMIN = "";
 const call = (path: string, init: RequestInit & { token?: string } = {}) => {
   const { token, ...rest } = init;
   const headers = { ...(rest.headers as Record<string, string>), ...(token ? { Authorization: "Bearer " + token } : {}) };
@@ -17,12 +18,43 @@ const gif2 = render({ format: "gif", elements: [{ type: "text", text: "Yo" }] })
 let kitchen: { write_token: string; read_token: string };
 let garage: { write_token: string; read_token: string };
 
-test("admin endpoints need the admin token", async () => {
+const post = (path: string, body: unknown, token?: string, ip = "1.1.1.1", e = env) =>
+  worker.fetch(
+    new Request("https://x" + path, { method: "POST", body: JSON.stringify(body), headers: { "CF-Connecting-IP": ip, ...(token ? { Authorization: "Bearer " + token } : {}) } }),
+    e,
+  );
+
+test("first-run setup: needs the setup token, works once, then admin endpoints need a session", async () => {
+  assert.deepEqual(await (await call("/admin/status")).json(), { configured: false, setup_available: true });
+  assert.equal((await call("/admin/panels")).status, 503, "no password yet");
+  assert.equal((await post("/admin/login", { password: PASSWORD })).status, 503);
+  assert.equal((await post("/admin/setup", { password: PASSWORD, setup_token: "nope" })).status, 401);
+  assert.equal((await post("/admin/setup", { password: "short", setup_token: SETUP_TOKEN })).status, 400);
+  assert.equal((await post("/admin/setup", { password: PASSWORD, setup_token: SETUP_TOKEN }, undefined, "1.1.1.1", { DB: makeDb() })).status, 503, "no SETUP_TOKEN configured");
+  ADMIN = await adminSession(env);
+  assert.equal((await post("/admin/setup", { password: PASSWORD, setup_token: SETUP_TOKEN })).status, 409, "only once");
   assert.equal((await call("/admin/panels")).status, 401);
   assert.equal((await call("/admin/panels", { token: "w_wrong" })).status, 401);
+  assert.equal((await call("/admin/panels", { token: "s_9999999999." + "0".repeat(64) })).status, 401, "forged session");
   assert.equal((await call("/admin/panels", { token: ADMIN })).status, 200);
-  const noAdmin = await worker.fetch(new Request("https://x/admin/panels"), { DB: makeDb() });
-  assert.equal(noAdmin.status, 503);
+});
+
+test("login, expiry, brute-force lock, password change and sign-out-everywhere", async () => {
+  assert.equal((await post("/admin/login", { password: "wrong password" }, undefined, "2.2.2.2")).status, 401);
+  const ok = (await (await post("/admin/login", { password: PASSWORD })).json()) as { session: string };
+  assert.equal((await call("/admin/panels", { token: ok.session })).status, 200);
+  assert.equal((await call("/admin/panels", { token: "s_1." + "0".repeat(64) })).status, 401);
+  for (let i = 0; i < 5; i++) assert.equal((await post("/admin/login", { password: "bad bad bad bad" }, undefined, "9.9.9.9")).status, 401);
+  assert.equal((await post("/admin/login", { password: PASSWORD }, undefined, "9.9.9.9")).status, 429, "locked even with the right password");
+  assert.equal((await post("/admin/login", { password: PASSWORD })).status, 200, "other clients are not affected");
+  assert.equal((await post("/admin/password", { old_password: "wrong", new_password: "another long password" }, ok.session)).status, 401);
+  const changed = (await (await post("/admin/password", { old_password: PASSWORD, new_password: "another long password" }, ok.session)).json()) as { session: string };
+  assert.equal((await call("/admin/panels", { token: ok.session })).status, 401, "old sessions die");
+  assert.equal((await post("/admin/login", { password: PASSWORD })).status, 401, "old password no longer works");
+  const back = (await (await post("/admin/password", { old_password: "another long password", new_password: PASSWORD }, changed.session)).json()) as { session: string };
+  assert.equal((await post("/admin/logout-all", {}, back.session)).status, 200);
+  assert.equal((await call("/admin/panels", { token: back.session })).status, 401);
+  ADMIN = ((await (await post("/admin/login", { password: PASSWORD })).json()) as { session: string }).session;
 });
 
 test("create panels; tokens are returned once and differ", async () => {
@@ -107,6 +139,24 @@ test("any panel token unlocks /render; rotate invalidates the old token", async 
   assert.equal((await call("/panel/kitchen/image", { token: kitchen.read_token })).status, 401);
   assert.equal((await call("/render?text=A", { token: kitchen.read_token })).status, 401);
   assert.equal((await call("/panel/kitchen/image", { token: rot.read_token })).status, 200);
+  assert.equal((await call("/panel/kitchen", { method: "PUT", token: kitchen.write_token, body: gif })).status, 200);
+});
+
+test("reset: rotate every token, then delete every panel", async () => {
+  const reset = (mode: string, token = ADMIN) => post("/admin/reset", { mode }, token);
+  assert.equal((await reset("tokens", "w_nope")).status, 401);
+  assert.equal((await reset("bogus")).status, 400);
+  const tokens = (await (await reset("tokens")).json()) as { panels: { id: string; write_token: string; read_token: string }[] };
+  assert.deepEqual(tokens.panels.map((p) => p.id), ["kitchen", "garage"]);
+  assert.equal((await call("/panel/garage", { token: garage.read_token })).status, 401, "old tokens are dead");
+  assert.equal((await call("/panel/garage", { token: tokens.panels[1]!.read_token })).status, 200);
+  const wiped = (await (await reset("all")).json()) as { panels: unknown[] };
+  assert.deepEqual(wiped.panels, []);
+  const list = (await (await call("/admin/panels", { token: ADMIN })).json()) as { panels: unknown[] };
+  assert.equal(list.panels.length, 0);
+  const mk = async (id: string) => (await (await call("/admin/panels", { method: "POST", token: ADMIN, body: JSON.stringify({ id }) })).json()) as typeof kitchen;
+  kitchen = await mk("kitchen");
+  garage = await mk("garage");
   assert.equal((await call("/panel/kitchen", { method: "PUT", token: kitchen.write_token, body: gif })).status, 200);
 });
 

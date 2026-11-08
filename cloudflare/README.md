@@ -20,18 +20,17 @@ npm run setup
 ```
 
 `npm run setup` creates (or finds) the D1 database `act1033-led`, applies the migrations, deploys the Worker, and generates an
-`ADMIN_TOKEN` stored as a Worker secret (a copy is written to `cloudflare/.admin-token`, which is git-ignored – keep it private).
+one-time `SETUP_TOKEN` stored as a Worker secret (a copy is written to `cloudflare/.setup-token`, which is git-ignored – keep it private).
 It also writes `wrangler.local.jsonc` with your D1 id (git-ignored). Later deploys: `npm run deploy`.
 
-Create a panel (use your Worker URL and the admin token):
+**Administration is entirely web-based.** Open the admin page (`web/admin/`, on GitHub Pages `https://<you>.github.io/ACT1033_LED/admin/`),
+enter the Worker URL and the `SETUP_TOKEN`, and choose the admin password (min. 10 characters; stored as a PBKDF2 hash in D1). From then on you
+sign in with the password (sessions last 8 h; 5 wrong attempts lock an IP for 5 min) and create/rotate/delete panels in the browser. There is no
+static admin token. To lock yourself back in after losing the password, set a new `SETUP_TOKEN` secret and run
+`wrangler d1 execute act1033-led --remote --command "DELETE FROM admin_settings"`.
 
-```bash
-curl -X POST https://<your-worker>/admin/panels \
-  -H "Authorization: Bearer <ADMIN_TOKEN>" -d '{"id":"kitchen","name":"Kitchen"}'
-```
-
-The answer contains `write_token` (for the control page) and `read_token` (for the ESP) – **shown only once**. Give each person
-a panel of their own; lost tokens can be replaced with `POST /admin/panels/<id>/rotate`.
+Each panel's answer contains `write_token` (for the control page) and `read_token` (for the ESP) – **shown only once**. Give each person
+a panel of their own; lost tokens can be replaced from the admin page (or `POST /admin/panels/<id>/rotate` with a session token).
 
 The Worker also has a **cron trigger (every minute)** for the departures job (`docs/RENDER_API.md`). `TRANSIT_URL` (var, default the public
 Wrocław transit API) says where departures come from; the compatibility flag `global_fetch_strictly_public` lets the Worker call another

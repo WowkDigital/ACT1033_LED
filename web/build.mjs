@@ -6,15 +6,17 @@ import { copyFileSync, mkdirSync } from "node:fs";
 
 mkdirSync("dist", { recursive: true });
 for (const f of ["index.html", "style.css"]) copyFileSync(f, "dist/" + f);
+mkdirSync("dist/admin", { recursive: true });
+copyFileSync("admin/index.html", "dist/admin/index.html"); // served at /ACT1033_LED/admin/
 
 const options = {
-  entryPoints: ["src/main.js"],
+  entryPoints: { app: "src/main.js", admin: "src/admin.js" },
   bundle: true,
   format: "esm",
   target: "es2022",
   minify: true,
   sourcemap: false,
-  outfile: "dist/app.js",
+  outdir: "dist",
   logLevel: "info",
 };
 
