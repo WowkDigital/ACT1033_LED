@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ACT1033 LED panel</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <h1>ACT1033 LED panel</h1>
+  <p class="lead">Compose something for your 64×16 panel and send it to your own Cloudflare Worker. Your ESP32 picks it up and shows it. Everything is rendered in this browser; the token never leaves it except to talk to your Worker.</p>
+
+  <section>
+    <h2>1. Connection</h2>
+    <label>Worker URL <input id="worker" type="url" placeholder="https://act1033-led.your-name.workers.dev" autocomplete="off" spellcheck="false"></label>
+    <div class="row">
+      <label>Panel ID <input id="panel" placeholder="kitchen" autocomplete="off" spellcheck="false"></label>
+      <label>Token (write or admin) <input id="token" type="password" placeholder="w_…" autocomplete="off" spellcheck="false"></label>
+    </div>
+    <div class="row actions">
+      <label class="check"><input id="remember" type="checkbox"> Remember on this device</label>
+      <button id="connect" type="button">Check connection</button>
+    </div>
+    <p id="conn-status" class="status" role="status"></p>
+  </section>
+
+  <section>
+    <h2>2. Content</h2>
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="text" aria-selected="true">Text</button>
+      <button type="button" role="tab" data-tab="life" aria-selected="false">Game of Life</button>
+      <button type="button" role="tab" data-tab="file" aria-selected="false">GIF / PNG file</button>
+    </div>
+
+    <div id="tab-text" class="pane">
+      <label>Text <input id="t-text" value="Hello" maxlength="200"></label>
+      <div class="row">
+        <label>Mode
+          <select id="t-mode"><option value="scroll">Scroll</option><option value="static">Static</option><option value="blink">Blink</option></select>
+        </label>
+        <label>Size
+          <select id="t-scale"><option value="1">5×7 (Polish letters)</option><option value="2">10×14</option></select>
+        </label>
+        <label>Speed <input id="t-speed" type="range" min="1" max="5" value="3"></label>
+      </div>
+      <div class="row">
+        <label>Text colour <input id="t-fg" type="color" value="#00ff00"></label>
+        <label>Background <input id="t-bg" type="color" value="#000000"></label>
+      </div>
+    </div>
+
+    <div id="tab-life" class="pane" hidden>
+      <div class="row">
+        <label>Colour <input id="l-fg" type="color" value="#00ff00"></label>
+        <label>Background <input id="l-bg" type="color" value="#000000"></label>
+        <label>Density <input id="l-density" type="range" min="10" max="60" value="30"></label>
+      </div>
+      <div class="row">
+        <label>Seed <input id="l-seed" type="number" value="1" min="0" step="1"></label>
+        <label>Frames <input id="l-frames" type="number" value="120" min="10" max="600" step="10"></label>
+        <label>Frame time (ms) <input id="l-delay" type="number" value="150" min="50" max="1000" step="10"></label>
+      </div>
+      <div class="row actions">
+        <label class="check"><input id="l-wrap" type="checkbox" checked> Wrap around edges</label>
+        <button id="l-random" type="button" class="secondary">New random seed</button>
+      </div>
+    </div>
+
+    <div id="tab-file" class="pane" hidden>
+      <label>GIF or PNG file <input id="f-file" type="file" accept="image/gif,image/png"></label>
+      <p class="hint">Best: 64×16 pixels, one shared palette of at most 16 colours, up to 64 KB. The file is sent unchanged.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>3. Preview and send</h2>
+    <canvas id="preview" width="64" height="16" aria-label="Preview of the panel"></canvas>
+    <img id="file-preview" alt="Preview of the chosen file" hidden>
+    <p id="info" class="status"></p>
+    <div class="row actions">
+      <button id="send" type="button" class="primary" disabled>Send to panel</button>
+    </div>
+    <p id="send-status" class="status" role="status"></p>
+  </section>
+
+  <footer>
+    <a href="https://github.com/WowkDigital/ACT1033_LED">Source code</a> · Setup guide in the repository README
+  </footer>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,28 +1,51 @@
-﻿// ACT1033_LED universal render Worker: takes a scene description, returns a PNG or GIF for the 64x16 panel.
-// POST /render (JSON spec) | GET /render?text=... | GET /health | GET / (usage)
+﻿// ACT1033_LED Worker: renders PNG/GIF for the 64x16 panel and relays finished images between a control page and the ESP32.
+//
+//   public:  GET /health | GET /
+//   token:   POST|GET /render                       (any valid token)
+//            PUT /panel/:id                         (panel write token)   upload a GIF/PNG
+//            GET /panel/:id/image                   (panel read token)    download it (ETag / 304)
+//            GET /panel/:id                         (any panel token)     metadata
+//   admin:   POST|GET /admin/panels                 (ADMIN_TOKEN)         create / list
+//            DELETE /admin/panels/:id | POST /admin/panels/:id/rotate
 
+import { bearer } from "./auth.ts";
+import {
+  adminCreate,
+  adminDelete,
+  adminList,
+  adminRotate,
+  panelImage,
+  panelMeta,
+  panelPut,
+  tokenIsValid,
+  type Env,
+} from "./panels.ts";
 import { render } from "./render.ts";
 import { RenderError, type Element, type Spec } from "./types.ts";
 
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-  "Access-Control-Expose-Headers": "X-Frames, X-Width, X-Height, X-Size",
-};
-
-const json = (data: unknown, status = 200): Response =>
-  Response.json(data, { status, headers: CORS });
+function corsHeaders(env: Env): Record<string, string> {
+  return {
+    "Access-Control-Allow-Origin": env.ALLOWED_ORIGIN || "*",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, If-None-Match",
+    "Access-Control-Expose-Headers": "ETag, X-Frames, X-Width, X-Height, X-Size",
+    Vary: "Origin",
+  };
+}
 
 const USAGE = {
   service: "act1033-led",
-  description: "Renders text / shapes / animations into PNG or GIF for the 64x16 BK-Light panel (default size).",
+  description: "Renders text / shapes / animations into PNG or GIF for the 64x16 BK-Light panel and relays images to ESP32 clients.",
+  auth: "Authorization: Bearer <token> (admin, panel write or panel read token)",
   endpoints: {
-    "GET /render": "text, color, bg, format (png|gif), scale, anim (none|scroll|blink), speed (1-5), align, valign, w, h, nonce",
-    "POST /render": "JSON scene: { width, height, format, background, elements | frames, loop, frame, nonce } - see docs/RENDER_API.md",
+    "GET|POST /render": "scene -> PNG/GIF (any valid token); see docs/RENDER_API.md",
+    "PUT /panel/:id": "upload GIF/PNG (write token)",
+    "GET /panel/:id/image": "download the current image, supports If-None-Match (read token)",
+    "GET /panel/:id": "metadata",
+    "POST|GET /admin/panels": "create / list panels (ADMIN_TOKEN)",
+    "DELETE /admin/panels/:id, POST /admin/panels/:id/rotate": "delete / rotate tokens (ADMIN_TOKEN)",
     "GET /health": "liveness probe",
   },
-  example: "/render?text=Hello%20Wroc%C5%82aw&color=00ff00&format=gif&anim=scroll",
 };
 
 function specFromQuery(q: URLSearchParams): Spec {
@@ -49,44 +72,84 @@ function specFromQuery(q: URLSearchParams): Spec {
   };
 }
 
-export default {
-  async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
+async function handle(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const path = url.pathname.replace(/\/+$/, "") || "/";
+  const method = request.method;
 
-    try {
-      if (url.pathname === "/health") return json({ ok: true, service: "act1033-led" });
-      if (url.pathname === "/") return json(USAGE);
+  if (path === "/health") return Response.json({ ok: true, service: "act1033-led" });
+  if (path === "/") return Response.json(USAGE);
 
-      if (url.pathname === "/render") {
-        let spec: Spec;
-        if (request.method === "GET") spec = specFromQuery(url.searchParams);
-        else if (request.method === "POST") {
-          try {
-            spec = (await request.json()) as Spec;
-          } catch {
-            throw new RenderError("body must be valid JSON");
-          }
-        } else return json({ error: "use GET or POST" }, 405);
-
-        const out = render(spec);
-        return new Response(out.body, {
-          headers: {
-            ...CORS,
-            "Content-Type": out.contentType,
-            "Cache-Control": spec.nonce ? "no-store" : request.method === "GET" ? "public, max-age=300" : "no-store",
-            "X-Frames": String(out.frames),
-            "X-Width": String(out.width),
-            "X-Height": String(out.height),
-            "X-Size": String(out.body.length),
-          },
-        });
+  if (path === "/render") {
+    if (!(await tokenIsValid(env, bearer(request)))) throw new RenderError("missing or invalid token", 401);
+    let spec: Spec;
+    if (method === "GET") spec = specFromQuery(url.searchParams);
+    else if (method === "POST") {
+      try {
+        spec = (await request.json()) as Spec;
+      } catch {
+        throw new RenderError("body must be valid JSON");
       }
-      return json({ error: "not found" }, 404);
-    } catch (e) {
-      if (e instanceof RenderError) return json({ error: e.message }, e.status);
-      console.error(e);
-      return json({ error: "internal error" }, 500);
+    } else throw new RenderError("use GET or POST", 405);
+    const out = render(spec);
+    return new Response(out.body, {
+      headers: {
+        "Content-Type": out.contentType,
+        "Cache-Control": "no-store",
+        "X-Frames": String(out.frames),
+        "X-Width": String(out.width),
+        "X-Height": String(out.height),
+        "X-Size": String(out.body.length),
+      },
+    });
+  }
+
+  if (path === "/admin/panels") {
+    if (method === "POST") return adminCreate(request, env);
+    if (method === "GET") return adminList(request, env);
+    throw new RenderError("use GET or POST", 405);
+  }
+  let m = /^\/admin\/panels\/([^/]+)(\/rotate)?$/.exec(path);
+  if (m) {
+    if (m[2]) {
+      if (method !== "POST") throw new RenderError("use POST", 405);
+      return adminRotate(request, env, m[1]!);
     }
+    if (method !== "DELETE") throw new RenderError("use DELETE", 405);
+    return adminDelete(request, env, m[1]!);
+  }
+
+  m = /^\/panel\/([^/]+)(\/image)?$/.exec(path);
+  if (m) {
+    const id = m[1]!;
+    if (m[2]) {
+      if (method !== "GET") throw new RenderError("use GET", 405);
+      return panelImage(request, env, id);
+    }
+    if (method === "PUT") return panelPut(request, env, id);
+    if (method === "GET") return panelMeta(request, env, id);
+    throw new RenderError("use GET or PUT", 405);
+  }
+
+  throw new RenderError("not found", 404);
+}
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const cors = corsHeaders(env);
+    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+    let res: Response;
+    try {
+      res = await handle(request, env);
+    } catch (e) {
+      if (e instanceof RenderError) res = Response.json({ error: e.message }, { status: e.status });
+      else {
+        console.error(e);
+        res = Response.json({ error: "internal error" }, { status: 500 });
+      }
+    }
+    const out = new Response(res.body, res);
+    for (const [k, v] of Object.entries(cors)) out.headers.set(k, v);
+    return out;
   },
-} satisfies ExportedHandler;
+} satisfies ExportedHandler<Env>;

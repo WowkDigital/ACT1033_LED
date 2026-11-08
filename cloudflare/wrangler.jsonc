@@ -1,6 +1,14 @@
-﻿{
+{
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "act1033-led",
   "main": "src/index.ts",
-  "compatibility_date": "2025-11-01"
+  "compatibility_date": "2025-11-01",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "act1033-led",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ]
 }

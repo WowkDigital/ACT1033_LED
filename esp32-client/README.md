@@ -1,16 +1,17 @@
 # ESP32-C3 client for the BK-Light 64×16 panel
 
-A thin bridge: the ESP32-C3 joins Wi-Fi, downloads a **finished PNG or GIF** from the Cloudflare render Worker
+A thin bridge: the ESP32-C3 joins Wi-Fi, downloads the panel's current **finished PNG or GIF** from your own Cloudflare Worker
 ([../cloudflare](../cloudflare), API in [../docs/RENDER_API.md](../docs/RENDER_API.md)) and uploads it to the panel over
 **BLE**. It does no rendering and has no web server.
 
 ```
- Cloudflare Worker ──HTTPS──▶ ESP32-C3 ──BLE──▶ BK-Light panel 64×16
- (renders text / shapes → GIF/PNG)  (download + relay)   (plays the uploaded GIF)
+ control page ──PUT (write token)──▶ Cloudflare Worker + D1 ◀──GET (read token, ETag)── ESP32-C3 ──BLE──▶ panel
+ (../web, GitHub Pages)                                                                (this firmware)
 ```
 
-Every `iv` seconds (default 30) the ESP fetches the configured URL. If the bytes differ from the last file the panel
-confirmed (CRC32), it uploads them; otherwise the panel is left alone. A failed download keeps the current picture.
+Every `iv` seconds (default 30) the ESP asks the Worker for the image. `304 Not Modified` means nothing to do; otherwise the new
+file is uploaded to the panel (bytes identical to the last confirmed file are skipped by CRC32). A failed download keeps the
+current picture.
 The panel protocol is described in [../docs/PROTOCOL.md](../docs/PROTOCOL.md).
 
 - **GIF** – segmented upload (4096 B), stored in the panel and played by it. Four random bytes are appended after the
@@ -29,16 +30,21 @@ pio run -t upload --upload-port COM4        # e.g. /dev/ttyACM0 on Linux
 
 ## Configure (USB serial, 115200)
 
+Everything is stored in the ESP's flash (NVS) – **nothing secret is compiled in or committed**.
+
 | Command | Effect |
 |---|---|
-| `wifi <ssid> <password>` | save Wi-Fi credentials (NVS) and restart – never put them in the repo |
+| `wifi <ssid> <password>` | save Wi-Fi credentials and restart |
 | `wifireset` | forget Wi-Fi credentials |
-| `url <https://…>` | image source, e.g. `https://act1033-led.wowk-digital.workers.dev/render?text=Hi&format=gif&anim=scroll` |
-| `iv <seconds>` | download interval, 5–3600 |
+| `url <https://<your-worker>/panel/<id>/image>` | where to fetch the picture |
+| `token <read token>` | the panel's `r_…` token from your Worker (`POST /admin/panels`) |
+| `addr <aa:bb:cc:dd:ee:ff \| auto>` | BLE address of your panel; `auto` = first `LED_BLE_*` device found |
+| `iv <seconds>` | check interval, 5–3600 (default 30) |
 | `now` | fetch and send immediately, even if unchanged |
-| `status` | IP, RSSI, heap, URL, interval |
+| `status` | IP, RSSI, heap, URL, interval (the token is never printed) |
 
-Opening the serial port resets the ESP. The panel address is `PANEL_ADDR` in `src/main.cpp` (`""` = first `LED_BLE_*` device).
+Each check sends `If-None-Match` with the last ETag; the Worker answers `304` when nothing changed, so an idle ESP downloads nothing.
+Opening the serial port resets the ESP. Set up the Worker and create a panel first: [../cloudflare/README.md](../cloudflare/README.md).
 
 ## Hardware notes
 

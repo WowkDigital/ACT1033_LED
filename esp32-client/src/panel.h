@@ -7,7 +7,7 @@ uint32_t crc32(const uint8_t* data, size_t len);
 
 class Panel {
  public:
-  // address: "aa:bb:cc:dd:ee:ff" or "" = first advertised LED_BLE_* device
+  // address: BLE address like "aa:bb:cc:dd:ee:ff" or "" = first advertised LED_BLE_* device
   void begin(const String& address);
 
   // Uploads a finished image (as produced by the Cloudflare render Worker) and disconnects.

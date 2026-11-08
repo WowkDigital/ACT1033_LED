@@ -49,7 +49,7 @@ frames, delays = render.text_frames("Hello", mode="scroll", scale=1, speed=3)
 gif = render.encode_gif(frames, delays, render.make_palette(bg=(0, 0, 0), fg=(0, 255, 0)))
 
 async def main():
-    async with Panel() as panel:            # or Panel("aa:bb:cc:dd:ee:ff")
+    async with Panel() as panel:            # or Panel("AA:BB:CC:DD:EE:FF")
         print(await panel.send_gif(gif))    # True when the panel confirmed the upload
 
 asyncio.run(main())

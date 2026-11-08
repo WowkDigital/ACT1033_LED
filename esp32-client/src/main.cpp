@@ -1,9 +1,12 @@
-// ESP32-C3 bridge: Cloudflare render Worker (HTTPS) -> BK-Light LED panel (BLE).
+// ESP32-C3 client: your Cloudflare Worker (HTTPS) -> BK-Light LED panel (BLE).
 //
-// Every `iv` seconds the ESP downloads a finished PNG/GIF from the configured URL and, when it differs from what the
-// panel already shows, uploads it over BLE. All rendering happens in the Worker (see ../cloudflare).
+// Every `iv` seconds the ESP asks the Worker for the panel's current image (GET .../panel/<id>/image with a read token).
+// The Worker answers 304 when nothing changed; otherwise the ESP uploads the new GIF/PNG to the panel over BLE.
+// All rendering happens elsewhere (the control page in a browser, or the Worker's /render endpoint).
 //
-// USB serial commands (115200):  status | now | url <https://...> | iv <seconds> | wifi <ssid> <password> | wifireset
+// USB serial commands (115200):
+//   status | now | url <https://worker/panel/<id>/image> | token <read token> | addr <panel BLE address|auto>
+//   iv <seconds> | wifi <ssid> <password> | wifireset
 #include <Arduino.h>
 #include <HTTPClient.h>
 #include <Preferences.h>
@@ -15,19 +18,17 @@
 #include "log.h"
 #include "panel.h"
 
-static const char* PANEL_ADDR = "aa:bb:cc:dd:ee:ff";  // "" = first LED_BLE_* device found
-static const char* DEFAULT_URL =
-    "https://act1033-led.wowk-digital.workers.dev/render?text=Hello%20from%20Cloudflare&format=gif&anim=scroll&color=00ff00";
-static const uint32_t DEFAULT_IV = 30;  // seconds between downloads
+static const uint32_t DEFAULT_IV = 30;  // seconds between checks
 static const size_t MAX_IMG = 64 * 1024;
 
 static Panel panel;
 static Preferences prefs;
-static String url;
+static String url, token, panelAddr;  // panelAddr "" = first LED_BLE_* device found
 static uint32_t ivSec = DEFAULT_IV;
 static bool due = true;
 static uint32_t nextAt = 0, lastCrc = 0;
 static bool haveLast = false;
+static String lastEtag;  // ETag of the image the panel confirmed
 
 void plog(const char* level, const char* fmt, ...) {
   char m[160];
@@ -40,8 +41,10 @@ void plog(const char* level, const char* fmt, ...) {
 
 // ---------------- config (NVS) ----------------
 static void loadConfig() {
-  prefs.begin("cfg", true);
-  url = prefs.getString("url", DEFAULT_URL);
+  prefs.begin("cfg", false);  // read-write so the namespace exists on first boot
+  url = prefs.getString("url", "");
+  token = prefs.getString("token", "");
+  panelAddr = prefs.getString("addr", "");
   ivSec = prefs.getUInt("iv", DEFAULT_IV);
   prefs.end();
 }
@@ -49,6 +52,8 @@ static void loadConfig() {
 static void saveConfig() {
   prefs.begin("cfg", false);
   prefs.putString("url", url);
+  prefs.putString("token", token);
+  prefs.putString("addr", panelAddr);
   prefs.putUInt("iv", ivSec);
   prefs.end();
 }
@@ -105,42 +110,56 @@ class BufStream : public Stream {
   int peek() override { return -1; }
 };
 
-static uint8_t* download(size_t& n) {
+enum class Fetch { Failed, Unchanged, Image };
+
+static Fetch download(uint8_t*& img, size_t& n, String& etag) {
+  img = nullptr;
   n = 0;
   WiFiClientSecure client;
-  client.setInsecure();  // public, read-only graphics; the ESP has no certificate store
+  client.setInsecure();  // the token still protects the content; the ESP has no certificate store
   HTTPClient http;
   http.setTimeout(10000);
   http.setConnectTimeout(8000);
   http.setUserAgent("ACT1033-ESP32");
-  if (!http.begin(client, url)) { plog("err", "bad URL"); return nullptr; }
+  if (!http.begin(client, url)) { plog("err", "bad URL"); return Fetch::Failed; }
+  if (token.length()) http.addHeader("Authorization", "Bearer " + token);
+  if (lastEtag.length()) http.addHeader("If-None-Match", lastEtag);
+  const char* wanted[] = {"ETag"};
+  http.collectHeaders(wanted, 1);
   uint32_t t0 = millis();
   int code = http.GET();
+  if (code == 304) { http.end(); return Fetch::Unchanged; }
   if (code != 200) {
-    plog("err", code > 0 ? "worker returned HTTP %d" : "worker unreachable (%d)", code);
+    plog("err", code == 401 ? "token rejected by the Worker (HTTP 401)" : code > 0 ? "worker returned HTTP %d" : "worker unreachable (%d)", code);
     http.end();
-    return nullptr;
+    return Fetch::Failed;
   }
+  etag = http.header("ETag");
   BufStream bs;
   http.writeToStream(&bs);  // handles Content-Length and chunked bodies
   http.end();
   if (bs.overflow || bs.len < 8) {
     plog("err", bs.overflow ? "image larger than %u KB" : "empty response", (unsigned)(MAX_IMG / 1024));
     free(bs.buf);
-    return nullptr;
+    return Fetch::Failed;
   }
   plog("i", "Downloaded %u B in %u ms", (unsigned)bs.len, (unsigned)(millis() - t0));
+  img = bs.buf;
   n = bs.len;
-  return bs.buf;
+  return Fetch::Image;
 }
 
 static void cycle() {
+  uint8_t* img;
   size_t n;
-  uint8_t* img = download(n);
-  if (!img) return;  // keep showing what is on the panel
+  String etag;
+  Fetch r = download(img, n, etag);
+  if (r == Fetch::Failed) return;  // keep showing what is on the panel
+  if (r == Fetch::Unchanged) { plog("i", "No change (304)"); return; }
   uint32_t crc = crc32(img, n);
-  if (haveLast && crc == lastCrc) {
+  if (haveLast && crc == lastCrc) {  // same bytes under a different/missing ETag
     plog("i", "Image unchanged - panel not touched");
+    lastEtag = etag;
     free(img);
     return;
   }
@@ -150,15 +169,19 @@ static void cycle() {
     ok = panel.send(img, n);
   }
   free(img);
-  if (ok) { lastCrc = crc; haveLast = true; }
+  if (ok) { lastCrc = crc; haveLast = true; lastEtag = etag; }
 }
 
 // ---------------- serial commands ----------------
 static void printStatus() {
-  Serial.printf("ip=%s rssi=%d heap=%u uptime=%us\nurl=%s\niv=%us last_crc=%s\n",
+  Serial.printf("ip=%s rssi=%d heap=%u uptime=%us\nurl=%s\ntoken=%s panel=%s iv=%us\nlast_crc=%s etag=%s\n",
                 WiFi.localIP().toString().c_str(), WiFi.RSSI(), (unsigned)ESP.getFreeHeap(), (unsigned)(millis() / 1000),
-                url.c_str(), (unsigned)ivSec, haveLast ? String(lastCrc, HEX).c_str() : "none");
+                url.length() ? url.c_str() : "(not set)", token.length() ? "set" : "(not set)",
+                panelAddr.length() ? panelAddr.c_str() : "auto", (unsigned)ivSec,
+                haveLast ? String(lastCrc, HEX).c_str() : "none", lastEtag.length() ? lastEtag.c_str() : "none");
 }
+
+static void refetch() { due = true; haveLast = false; lastEtag = ""; }
 
 static void handleSerial() {
   static String line;
@@ -167,8 +190,19 @@ static void handleSerial() {
     if (c != '\n' && c != '\r') { line += c; continue; }
     line.trim();
     if (line == "status") printStatus();
-    else if (line == "now") { due = true; haveLast = false; }
-    else if (line.startsWith("url ")) { url = line.substring(4); url.trim(); saveConfig(); due = true; haveLast = false; Serial.println("url saved"); }
+    else if (line == "now") refetch();
+    else if (line.startsWith("url ")) { url = line.substring(4); url.trim(); saveConfig(); refetch(); Serial.println("url saved"); }
+    else if (line.startsWith("token ")) { token = line.substring(6); token.trim(); saveConfig(); refetch(); Serial.println("token saved"); }
+    else if (line.startsWith("addr ")) {
+      panelAddr = line.substring(5);
+      panelAddr.trim();
+      panelAddr.toLowerCase();
+      if (panelAddr == "auto") panelAddr = "";
+      saveConfig();
+      Serial.println("panel address saved, restarting");
+      delay(300);
+      ESP.restart();
+    }
     else if (line.startsWith("iv ")) { ivSec = constrain(line.substring(3).toInt(), 5, 3600); saveConfig(); Serial.printf("interval %us\n", (unsigned)ivSec); }
     else if (line == "wifireset") { prefs.begin("wifi", false); prefs.clear(); prefs.end(); Serial.println("cleared, restarting"); delay(300); ESP.restart(); }
     else if (line.startsWith("wifi ")) {
@@ -181,7 +215,8 @@ static void handleSerial() {
       Serial.println("saved, restarting");
       delay(300);
       ESP.restart();
-    } else if (line.length()) Serial.println("commands: status | now | url <https://...> | iv <seconds> | wifi <ssid> <password> | wifireset");
+    } else if (line.length())
+      Serial.println("commands: status | now | url <image url> | token <read token> | addr <ble address|auto> | iv <seconds> | wifi <ssid> <password> | wifireset");
     line = "";
   }
 }
@@ -191,9 +226,11 @@ void setup() {
   delay(1500);
   Serial.println("\n=== ESP32-C3 ACT1033_LED (Cloudflare client) ===");
   loadConfig();
-  panel.begin(PANEL_ADDR);
-  if (connectWifi()) Serial.printf("Wi-Fi OK, IP %s\nsource: %s every %us\n", WiFi.localIP().toString().c_str(), url.c_str(), (unsigned)ivSec);
+  panel.begin(panelAddr);
+  if (connectWifi()) Serial.printf("Wi-Fi OK, IP %s\n", WiFi.localIP().toString().c_str());
   else Serial.println("No Wi-Fi. Set it with:  wifi <ssid> <password>");
+  if (!url.length() || !token.length()) Serial.println("Not configured. Set:  url <https://worker/panel/<id>/image>   and   token <read token>");
+  else Serial.printf("source: %s every %us\n", url.c_str(), (unsigned)ivSec);
 }
 
 void loop() {
@@ -202,7 +239,9 @@ void loop() {
   static uint32_t downSince = 0, hint = 0;
   if (WiFi.status() == WL_CONNECTED) {
     downSince = 0;
-    if (due || (int32_t)(millis() - nextAt) >= 0) {
+    if (!url.length() || !token.length()) {
+      if (millis() - hint > 15000) { hint = millis(); Serial.println("Not configured: set url and token (see 'help')."); }
+    } else if (due || (int32_t)(millis() - nextAt) >= 0) {
       due = false;
       nextAt = millis() + ivSec * 1000;
       cycle();

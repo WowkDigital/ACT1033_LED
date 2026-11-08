@@ -1,3 +1,6 @@
-﻿node_modules/
+node_modules/
 .wrangler/
 .dev.vars
+wrangler.local.jsonc
+.admin-token
+.panel-*.json

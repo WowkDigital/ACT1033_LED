@@ -20,7 +20,7 @@
 #include "png.h"
 #include "web.h"
 
-static const char* PANEL_ADDR = "aa:bb:cc:dd:ee:ff";  // "" = first LED_BLE_* device found
+static const char* PANEL_ADDR = "";  // BLE address of your panel, e.g. "aa:bb:cc:dd:ee:ff"; "" = first LED_BLE_* device found
 static const char* HOSTNAME = "panel";                 // http://panel.local
 static const size_t MAX_GIF = 64 * 1024;
 static const char* FW = __DATE__ " " __TIME__;

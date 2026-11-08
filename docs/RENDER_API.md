@@ -4,7 +4,16 @@ Universal renderer for the 64×16 BK-Light panel. Every other feature (transit d
 a scene description here and gets back a finished **PNG** or **GIF** that the panel accepts as-is
 (see [PROTOCOL.md](PROTOCOL.md)).
 
-Base URL: `https://act1033-led.wowk-digital.workers.dev` · CORS enabled · no authentication (yet).
+Base URL: your own Worker, e.g. `https://act1033-led.<your-subdomain>.workers.dev` (see [../cloudflare/README.md](../cloudflare/README.md)).
+CORS enabled. **Every endpoint except `/health` and `/` needs a token**: `Authorization: Bearer <token>`.
+
+| Token | Who holds it | Allowed |
+|---|---|---|
+| admin (`ADMIN_TOKEN`, a Worker secret) | the Worker's owner | everything, incl. creating panels |
+| panel write token (`w_…`) | the control page | upload to its panel, `/render` |
+| panel read token (`r_…`) | the ESP32 | download from its panel, `/render` |
+
+Tokens are random 256-bit values; only their SHA-256 hashes are stored (in D1). A leaked read token cannot overwrite the panel.
 
 ## `GET /render` – quick text
 
@@ -46,6 +55,20 @@ Elements: `text {text,color,scale,x,y,align,valign,anim,speed}`, `rect {x,y,w,h,
 
 The image bytes (`image/png` or `image/gif`) plus headers `X-Frames`, `X-Width`, `X-Height`, `X-Size`.
 Errors are JSON `{ "error": "…" }` with 400 (bad input), 404 (missing frame), 405, 422 (GIF with more than 16 colours), 500.
+
+## Panel API (images stored in D1)
+
+| Request | Token | Result |
+|---|---|---|
+| `POST /admin/panels` `{"id":"kitchen","name":"Kitchen"}` | admin | `201` with `write_token` and `read_token` (shown once) |
+| `GET /admin/panels` | admin | list (no hashes) |
+| `POST /admin/panels/:id/rotate` `{"which":"write"\|"read"\|"both"}` | admin | new token(s); old ones stop working |
+| `DELETE /admin/panels/:id` | admin | removes the panel and its image |
+| `PUT /panel/:id` (body = GIF or PNG, ≤ 64 KB) | write / admin | `{ok, changed, etag, size}`; an identical upload is not written again |
+| `GET /panel/:id/image` | read / write / admin | the image with an `ETag`; `If-None-Match` → `304` |
+| `GET /panel/:id` | any panel token | metadata (`has_image`, `etag`, `size`, `updated_at`) |
+
+`id` is 1–32 characters `[a-z0-9-]`. One ESP32 reads one panel; the control page writes to it.
 
 ## Panel-specific behaviour built in
 

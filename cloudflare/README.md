@@ -1,15 +1,56 @@
-﻿# cloudflare/
+# cloudflare/ – your own Worker
 
-All Cloudflare code for ACT1033_LED lives here (Workers, config, tooling).
+A Cloudflare Worker (TypeScript) with a D1 database. It does two things:
 
-The Worker is a universal renderer: it takes a scene (text, shapes, animations) and returns a finished
-PNG/GIF for the 64x16 panel. See [docs/RENDER_API.md](../docs/RENDER_API.md).
+1. **Renders** text / shapes / animations into a finished PNG/GIF for the 64×16 panel (`/render`).
+2. **Relays** images between the control page ([../web](../web)) and your ESP32 ([../esp32-client](../esp32-client)) – each panel has
+   its own ID and tokens (`/panel/:id`).
 
-```
+API reference: [../docs/RENDER_API.md](../docs/RENDER_API.md). Everyone runs **their own** Worker, so nobody else's quota or data is involved.
+
+## Set up your own (about 5 minutes)
+
+You need a free Cloudflare account and Node.js ≥ 22.
+
+```bash
+cd cloudflare
 npm install
-npx wrangler login      # once
-npm run dev             # local
-npm run deploy
+npx wrangler login          # once
+npm run setup
 ```
 
-Secrets go in `.dev.vars` (local, git-ignored) or `wrangler secret put` - never in the repo.
+`npm run setup` creates (or finds) the D1 database `act1033-led`, applies the migrations, deploys the Worker, and generates an
+`ADMIN_TOKEN` stored as a Worker secret (a copy is written to `cloudflare/.admin-token`, which is git-ignored – keep it private).
+It also writes `wrangler.local.jsonc` with your D1 id (git-ignored). Later deploys: `npm run deploy`.
+
+Create a panel (use your Worker URL and the admin token):
+
+```bash
+curl -X POST https://<your-worker>/admin/panels \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" -d '{"id":"kitchen","name":"Kitchen"}'
+```
+
+The answer contains `write_token` (for the control page) and `read_token` (for the ESP) – **shown only once**. Give each person
+a panel of their own; lost tokens can be replaced with `POST /admin/panels/<id>/rotate`.
+
+Optional: set the variable `ALLOWED_ORIGIN` (e.g. `https://<you>.github.io`) in `wrangler.local.jsonc` under `"vars"` to
+restrict CORS to your control page.
+
+## Development
+
+```bash
+npm test                    # 12 tests, in-memory SQLite stands in for D1
+npm run check               # tsc --noEmit
+npm run dev                 # wrangler dev (uses wrangler.local.jsonc)
+python tools/gen_font.py    # regenerate src/font.ts after editing python/act1033led/font.py
+```
+
+## Secrets – what must never be committed
+
+`.admin-token`, `.panel-*.json`, `.dev.vars` and `wrangler.local.jsonc` are in `.gitignore`. Tokens only ever travel in the
+`Authorization` header, never in URLs.
+
+## Free-plan limits (check the current Cloudflare docs)
+
+Workers: ~100k requests/day. D1: ~100k row writes and ~5M row reads per day. An ESP polling every 30 s uses ~2900 requests/day, and a
+`304` costs no D1 write. Uploads that do not change the picture are not written either.

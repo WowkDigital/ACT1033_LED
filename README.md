@@ -16,13 +16,18 @@ Control a BK-Light 64×16 BLE LED panel in two ways, with the same features and 
         └─ or ──HTTP──▶ ESP32-C3 (act1033 --esp panel.local …)
 ```
 
-A third, cloud-based mode keeps the ESP minimal: a **Cloudflare Worker** ([`cloudflare/`](cloudflare/)) renders
-text / shapes / animations into a finished PNG/GIF, and a thin **ESP32 client** ([`esp32-client/`](esp32-client/))
-downloads it and relays it to the panel over BLE. See [docs/RENDER_API.md](docs/RENDER_API.md).
+A third, **cloud-based** mode keeps the ESP minimal and lets you control the panel from anywhere. You deploy **your own**
+Cloudflare Worker ([`cloudflare/`](cloudflare/)) with a D1 database; a static control page ([`web/`](web/), GitHub Pages)
+renders content in the browser and uploads it; a thin ESP32 client ([`esp32-client/`](esp32-client/)) downloads it and relays it
+to the panel over BLE. Access is protected by tokens (one write token per panel for the page, one read token for the ESP,
+one admin token for you). Several panels and ESPs are supported, each with its own ID and tokens.
 
 ```
- Cloudflare Worker ──HTTPS (PNG/GIF)──▶ ESP32-C3 client ──BLE──▶ BK-Light panel
+ control page ──PUT──▶ your Worker + D1 ◀──GET (304 if unchanged)── ESP32-C3 client ──BLE──▶ BK-Light panel
+ (GitHub Pages)        (tokens, ETag)                                 (esp32-client/)
 ```
+
+Start with [cloudflare/README.md](cloudflare/README.md); API in [docs/RENDER_API.md](docs/RENDER_API.md).
 
 Both sides render the same things (text, Game of Life, GIFs) into a GIF that stays inside the panel and keeps
 playing after the sender disconnects. The renderers are intentionally identical: the same text, seed and settings

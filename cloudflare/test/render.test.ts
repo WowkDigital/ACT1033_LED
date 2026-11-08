@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { render } from "../src/render.ts";
 import { crc32 } from "../src/encode.ts";
 import worker from "../src/index.ts";
+import { makeDb } from "./d1shim.ts";
 
 test("PNG has valid signature and 64x16 header, 1-bit for 2 colours", () => {
   const r = render({ elements: [{ type: "text", text: "Hi", color: "#ff0000" }] });
@@ -56,13 +57,17 @@ test("validation errors", () => {
   assert.throws(() => render({ elements: [{ type: "text", text: "a", anim: "scroll" }, { type: "text", text: "b", anim: "blink" }] }), /only one animated/);
 });
 
-test("HTTP: GET /render and POST /render", async () => {
-  const g = await worker.fetch(new Request("https://x/render?text=Test&format=gif&anim=blink"));
+test("HTTP: /render needs a token; GET and POST work with it", async () => {
+  const env = { DB: makeDb(), ADMIN_TOKEN: "admin-secret" };
+  const auth = { Authorization: "Bearer admin-secret" };
+  assert.equal((await worker.fetch(new Request("https://x/render?text=Test"), env)).status, 401);
+  assert.equal((await worker.fetch(new Request("https://x/render?text=Test", { headers: { Authorization: "Bearer nope" } }), env)).status, 401);
+  const g = await worker.fetch(new Request("https://x/render?text=Test&format=gif&anim=blink", { headers: auth }), env);
   assert.equal(g.status, 200);
   assert.equal(g.headers.get("content-type"), "image/gif");
-  const p = await worker.fetch(new Request("https://x/render", { method: "POST", body: JSON.stringify({ elements: [{ type: "text", text: "Zażółć" }] }) }));
+  const p = await worker.fetch(new Request("https://x/render", { method: "POST", headers: auth, body: JSON.stringify({ elements: [{ type: "text", text: "Zażółć" }] }) }), env);
   assert.equal(p.headers.get("content-type"), "image/png");
-  const bad = await worker.fetch(new Request("https://x/render", { method: "POST", body: "{" }));
+  const bad = await worker.fetch(new Request("https://x/render", { method: "POST", headers: auth, body: "{" }), env);
   assert.equal(bad.status, 400);
-  assert.equal((await worker.fetch(new Request("https://x/nope"))).status, 404);
+  assert.equal((await worker.fetch(new Request("https://x/nope"), env)).status, 404);
 });
