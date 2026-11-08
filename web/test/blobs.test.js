@@ -1,20 +1,20 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PALETTES, blobFrames } from "../src/blobs.js";
+import { PALETTES, quantize } from "../src/blobs.js";
 
-test("blobs: deterministic, 64x16, fits a 16-colour GIF table", () => {
-  for (const palette of Object.keys(PALETTES)) {
-    const a = blobFrames({ seed: 7, palette });
-    const b = blobFrames({ seed: 7, palette });
-    assert.deepEqual(a.frames, b.frames);
-    assert.ok(a.count > 3);
-    assert.equal(a.frames[0].length, 64 * 16);
-    assert.ok(new Set(a.frames.flatMap((f) => [...f])).size <= 16);
-  }
+test("every preset fits a 16-colour GIF table", () => {
+  for (const p of Object.values(PALETTES)) assert.ok(1 + p.rings.length <= 16);
 });
 
-test("blobs: animation loops seamlessly and wobble 0 is static", () => {
-  const still = blobFrames({ seed: 3, wobble: 0, frames: 4 });
-  assert.deepEqual(still.frames[0], still.frames[2]);
-  assert.equal(blobFrames({ seed: 3, frames: 1 }).frames.length, 1);
+test("quantize votes per block and returns only palette colours", () => {
+  const pal = { bg: 0x000000, rings: [0xff0000, 0x0000ff] };
+  const scale = 2, full = 64 * scale;
+  const rgba = new Uint8ClampedArray(full * 16 * scale * 4);
+  for (let i = 0; i < rgba.length; i += 4) rgba[i + 3] = 255;
+  const set = (x, y, r, g, b) => { const o = (y * full + x) * 4; rgba[o] = r; rgba[o + 1] = g; rgba[o + 2] = b; };
+  for (const [x, y] of [[0, 0], [1, 0], [0, 1]]) set(x, y, 250, 10, 10); // 3 of 4 pixels reddish
+  const f = quantize(rgba, scale, pal);
+  assert.equal(f[0], 0xff0000);
+  assert.equal(f[1], 0x000000);
+  assert.ok(f.every((v) => v === 0 || v === 0xff0000 || v === 0x0000ff));
 });

@@ -1,8 +1,8 @@
-// Blob generator for the 64x16 panel: non-overlapping circles packed with a seeded PRNG, drawn as
-// concentric flat-colour rings with a gently wobbling outline. Inspired by BlobBackground.js, but rasterised
-// per pixel, because the panel's GIF allows only 16 colours (background + at most 15 ring colours, no colour jitter).
+// Colour presets and pixel quantiser for the Blobs tab. The blobs themselves are drawn by the original
+// BlobBackground library (blob-background.js, see blobs-render.js) at high resolution; this module turns that
+// picture into 64x16 panel frames that use only palette colours (the GIF allows at most 16).
 
-import { H, W, mulberry32 } from "./life.js";
+import { H, W } from "./life.js";
 
 const hsl = (h, s, l) => {
   s /= 100;
@@ -29,65 +29,38 @@ export const PALETTES = {
   "Pain Eye": { bg: hex("#ffffff"), rings: [hsl(0, 100, 50), hsl(135, 100, 50), hsl(225, 100, 50), hsl(318, 100, 50), hsl(180, 100, 50), hsl(30, 100, 50)] },
 };
 
-export const BLOB_FRAMES = 24; // one full wobble cycle
+export const toHex = (c) => "#" + c.toString(16).padStart(6, "0");
 
-/** Packs circles biggest-first; `pad` reserves room for the wobble so animated outlines never touch. */
-export function packBlobs(rnd, { minR, maxR, gap, pad }) {
-  const blobs = [];
-  const fits = (x, y, r) => {
-    const rr = r * (1 + pad);
-    if (x - rr < 0 || x + rr > W || y - rr < 0 || y + rr > H) return false;
-    return blobs.every((b) => Math.hypot(x - b.x, y - b.y) >= rr + b.r * (1 + pad) + gap);
+/**
+ * Downsamples RGBA pixels (width = W*scale, height = H*scale) to a 64x16 frame: every panel pixel takes the
+ * palette colour (bg first, then rings) that wins the vote among the pixels of its scale x scale block.
+ */
+export function quantize(rgba, scale, pal) {
+  const cols = [pal.bg, ...pal.rings].map((c) => [(c >> 16) & 255, (c >> 8) & 255, c & 255]);
+  const nearest = (r, g, b) => {
+    let best = 0;
+    let bd = Infinity;
+    for (let i = 0; i < cols.length; i++) {
+      const d = (cols[i][0] - r) ** 2 + (cols[i][1] - g) ** 2 + (cols[i][2] - b) ** 2;
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
   };
-  const radii = [];
-  for (let i = 0; i < 120; i++) radii.push(minR + rnd() * (maxR - minR));
-  radii.sort((a, b) => b - a);
-  for (const r of radii) {
-    for (let t = 0; t < 60; t++) {
-      const x = rnd() * W;
-      const y = rnd() * H;
-      if (fits(x, y, r)) {
-        blobs.push({ x, y, r });
-        break;
-      }
-    }
-  }
-  return blobs;
-}
-
-/** Returns n frames of 64*16 pixels (packed 0xRRGGBB). n = 1 gives a still picture. */
-export function blobFrames({ seed = 1, palette = "Warm Ceramic", minR = 2, maxR = 7, gap = 1, wobble = 0.15, frames = BLOB_FRAMES } = {}) {
-  const pal = PALETTES[palette] || PALETTES["Warm Ceramic"];
-  const rnd = mulberry32(seed);
-  minR = Math.max(1, Math.min(minR, maxR));
-  const blobs = packBlobs(rnd, { minR, maxR, gap, pad: wobble });
-  for (const b of blobs) {
-    b.rings = b.r >= 5 ? 3 : b.r >= 3 ? 2 : 1;
-    b.base = Math.floor(rnd() * pal.rings.length);
-    b.p1 = rnd() * Math.PI * 2;
-    b.p2 = rnd() * Math.PI * 2;
-    b.m1 = rnd() < 0.5 ? 1 : -1; // direction of the wobble, integer cycles per loop => seamless
-  }
-  const out = [];
-  for (let f = 0; f < frames; f++) {
-    const t = frames > 1 ? (f / frames) * Math.PI * 2 : 0;
-    const img = new Uint32Array(W * H).fill(pal.bg);
-    for (const b of blobs) {
-      const reach = Math.ceil(b.r * (1 + wobble)) + 1;
-      for (let y = Math.max(0, Math.floor(b.y) - reach); y <= Math.min(H - 1, Math.floor(b.y) + reach); y++) {
-        for (let x = Math.max(0, Math.floor(b.x) - reach); x <= Math.min(W - 1, Math.floor(b.x) + reach); x++) {
-          const dx = x + 0.5 - b.x;
-          const dy = y + 0.5 - b.y;
-          const a = Math.atan2(dy, dx);
-          const rEff = b.r * (1 + wobble * (0.6 * Math.sin(2 * a + b.p1 + b.m1 * t) + 0.4 * Math.sin(3 * a + b.p2 - b.m1 * t)));
-          const d = Math.hypot(dx, dy) / rEff;
-          if (d > 1) continue;
-          const ring = Math.min(b.rings - 1, Math.floor((1 - d) * b.rings));
-          img[y * W + x] = pal.rings[(b.base + ring) % pal.rings.length];
+  const full = W * scale;
+  const out = new Uint32Array(W * H);
+  const all = [pal.bg, ...pal.rings];
+  const votes = new Uint16Array(cols.length);
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      votes.fill(0);
+      for (let dy = 0; dy < scale; dy++)
+        for (let dx = 0; dx < scale; dx++) {
+          const o = ((y * scale + dy) * full + x * scale + dx) * 4;
+          votes[nearest(rgba[o], rgba[o + 1], rgba[o + 2])]++;
         }
-      }
+      let best = 0;
+      for (let i = 1; i < votes.length; i++) if (votes[i] > votes[best]) best = i;
+      out[y * W + x] = all[best];
     }
-    out.push(img);
-  }
-  return { frames: out, count: blobs.length, bg: pal.bg };
+  return out;
 }

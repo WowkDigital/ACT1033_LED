@@ -3,7 +3,8 @@
 import { buildAnimation } from "../../cloudflare/src/render.ts";
 import { encodeGif } from "../../cloudflare/src/encode.ts";
 import { H, W, lifeFrames } from "./life.js";
-import { PALETTES, blobFrames } from "./blobs.js";
+import { PALETTES } from "./blobs.js";
+import { blobFrames } from "./blobs-render.js";
 
 const MAX = 64 * 1024;
 const KEY = "act1033-led";
@@ -110,19 +111,18 @@ function buildLife() {
   return out;
 }
 
-function buildBlobs() {
+async function buildBlobs() {
   const minR = Number($("b-min").value);
-  const maxR = Math.max(minR, Number($("b-max").value));
-  const animate = $("b-animate").checked && Number($("b-wobble").value) > 0;
-  const r = blobFrames({
+  const r = await blobFrames({
     seed: Number($("b-seed").value) | 0,
     palette: $("b-palette").value,
     minR,
-    maxR,
+    maxR: Math.max(minR, Number($("b-max").value)),
     wobble: Number($("b-wobble").value) / 100,
-    frames: animate ? 24 : 1,
+    animate: $("b-animate").checked,
   });
-  const out = gifFrom(r.frames, Array(r.frames.length).fill(clamp(Number($("b-delay").value), 50, 1000)), r.bg);
+  const delay = clamp(Number($("b-delay").value), 50, 1000);
+  const out = gifFrom(r.frames, r.frames.map((_, i) => (i === r.frames.length - 1 && r.frames.length > 1 ? delay * 8 : delay)), r.bg);
   out.note = r.count + " blobs";
   return out;
 }
@@ -165,7 +165,9 @@ function play(frames, delays) {
   tick();
 }
 
+let gen = 0;
 async function refresh() {
+  const mine = ++gen;
   stopPlayer();
   current = null;
   $("file-preview").hidden = tab !== "file";
@@ -179,7 +181,9 @@ async function refresh() {
         $("file-preview").src = URL.createObjectURL(current.file);
       }
     } else {
-      current = tab === "text" ? buildText() : tab === "blobs" ? buildBlobs() : buildLife();
+      const built = tab === "text" ? buildText() : tab === "blobs" ? await buildBlobs() : buildLife();
+      if (mine !== gen) return;
+      current = built;
       play(current.frames, current.delays);
     }
     if (current) {
