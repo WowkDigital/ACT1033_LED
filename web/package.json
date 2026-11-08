@@ -5,7 +5,7 @@
   "scripts": {
     "build": "node build.mjs",
     "dev": "node build.mjs --serve",
-    "test": "node --test test/life.test.js"
+    "test": "node --test test/life.test.js test/blobs.test.js"
   },
   "devDependencies": {
     "esbuild": "^0.25.0"

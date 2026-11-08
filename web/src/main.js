@@ -3,6 +3,7 @@
 import { buildAnimation } from "../../cloudflare/src/render.ts";
 import { encodeGif } from "../../cloudflare/src/encode.ts";
 import { H, W, lifeFrames } from "./life.js";
+import { PALETTES, blobFrames } from "./blobs.js";
 
 const MAX = 64 * 1024;
 const KEY = "act1033-led";
@@ -109,6 +110,23 @@ function buildLife() {
   return out;
 }
 
+function buildBlobs() {
+  const minR = Number($("b-min").value);
+  const maxR = Math.max(minR, Number($("b-max").value));
+  const animate = $("b-animate").checked && Number($("b-wobble").value) > 0;
+  const r = blobFrames({
+    seed: Number($("b-seed").value) | 0,
+    palette: $("b-palette").value,
+    minR,
+    maxR,
+    wobble: Number($("b-wobble").value) / 100,
+    frames: animate ? 24 : 1,
+  });
+  const out = gifFrom(r.frames, Array(r.frames.length).fill(clamp(Number($("b-delay").value), 50, 1000)), r.bg);
+  out.note = r.count + " blobs";
+  return out;
+}
+
 async function buildFile() {
   const file = $("f-file").files[0];
   if (!file) return null;
@@ -161,7 +179,7 @@ async function refresh() {
         $("file-preview").src = URL.createObjectURL(current.file);
       }
     } else {
-      current = tab === "text" ? buildText() : buildLife();
+      current = tab === "text" ? buildText() : tab === "blobs" ? buildBlobs() : buildLife();
       play(current.frames, current.delays);
     }
     if (current) {
@@ -304,7 +322,7 @@ for (const b of document.querySelectorAll(".tabs button")) {
   b.addEventListener("click", () => {
     tab = b.dataset.tab;
     for (const o of document.querySelectorAll(".tabs button")) o.setAttribute("aria-selected", String(o === b));
-    for (const t of ["text", "life", "file", "mpk"]) $("tab-" + t).hidden = t !== tab;
+    for (const t of ["text", "life", "blobs", "file", "mpk"]) $("tab-" + t).hidden = t !== tab;
     $("sec-send").hidden = tab === "mpk";
     if (tab === "mpk") {
       stopPlayer();
@@ -327,4 +345,22 @@ $("l-random").addEventListener("click", () => {
   $("l-seed").value = Math.floor(Math.random() * 1e6);
   refresh();
 });
+$("b-random").addEventListener("click", () => {
+  $("b-seed").value = Math.floor(Math.random() * 1e6);
+  refresh();
+});
+for (const name of Object.keys(PALETTES)) $("b-palette").add(new Option(name, name));
+function showSwatches() {
+  const p = PALETTES[$("b-palette").value];
+  const css = (c) => "#" + c.toString(16).padStart(6, "0");
+  $("b-swatches").innerHTML = "";
+  for (const c of [p.bg, ...p.rings]) {
+    const i = document.createElement("i");
+    i.style.background = css(c);
+    $("b-swatches").append(i);
+  }
+}
+$("b-palette").addEventListener("change", showSwatches);
+$("b-palette").selectedIndex = Math.floor(Math.random() * Object.keys(PALETTES).length);
+showSwatches();
 refresh();

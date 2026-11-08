@@ -30,6 +30,7 @@
     <div class="tabs" role="tablist">
       <button type="button" role="tab" data-tab="text" aria-selected="true">Text</button>
       <button type="button" role="tab" data-tab="life" aria-selected="false">Game of Life</button>
+      <button type="button" role="tab" data-tab="blobs" aria-selected="false">Blobs</button>
       <button type="button" role="tab" data-tab="file" aria-selected="false">GIF / PNG file</button>
       <button type="button" role="tab" data-tab="mpk" aria-selected="false">Departures</button>
     </div>
@@ -65,6 +66,24 @@
       <div class="row actions">
         <label class="check"><input id="l-wrap" type="checkbox" checked> Wrap around edges</label>
         <button id="l-random" type="button" class="secondary">New random seed</button>
+      </div>
+    </div>
+
+    <div id="tab-blobs" class="pane" hidden>
+      <label>Colour preset <select id="b-palette"></select></label>
+      <div id="b-swatches" class="swatches" aria-hidden="true"></div>
+      <div class="row">
+        <label>Min radius <input id="b-min" type="range" min="1" max="6" value="2"></label>
+        <label>Max radius <input id="b-max" type="range" min="2" max="8" value="7"></label>
+        <label>Wobble <input id="b-wobble" type="range" min="0" max="30" value="15"></label>
+      </div>
+      <div class="row">
+        <label>Seed <input id="b-seed" type="number" value="1" min="0" step="1"></label>
+        <label>Frame time (ms) <input id="b-delay" type="number" value="120" min="50" max="1000" step="10"></label>
+      </div>
+      <div class="row actions">
+        <label class="check"><input id="b-animate" type="checkbox" checked> Animate (wobbling outlines)</label>
+        <button id="b-random" type="button" class="secondary">New random blobs</button>
       </div>
     </div>
 

@@ -55,3 +55,5 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .hint { font-size: 13px; color: var(--muted); margin: 0; }
 footer { text-align: center; color: var(--muted); font-size: 13px; margin-top: 24px; }
 footer a { color: var(--accent); }
+.swatches { display: flex; gap: 4px; margin: -4px 0 12px; }
+.swatches i { width: 24px; height: 24px; border-radius: 6px; border: 1px solid var(--border); }
