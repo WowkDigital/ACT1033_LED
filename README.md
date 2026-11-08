@@ -2,7 +2,7 @@
 
 Control a BK-Light 64×16 BLE LED panel in two ways, with the same features and the same GIF pipeline:
 
-| | **ESP32 bridge** ([`esp32/`](esp32/)) | **Python on a PC** ([`python/`](python/)) |
+| | **ESP32 standalone** ([`esp32/`](esp32/)) | **Python on a PC** ([`python/`](python/)) |
 |---|---|---|
 | Runs on | ESP32-C3, always on | Windows (also macOS/Linux) with Python ≥ 3.9 |
 | How you use it | web page from any phone/PC on the Wi-Fi, HTTP API | command line `act1033 …` or import the library |
@@ -14,6 +14,14 @@ Control a BK-Light 64×16 BLE LED panel in two ways, with the same features and 
                                                  ├─▶ BK-Light panel (plays the uploaded GIF by itself)
  PC: act1033 (Python) ──────────BLE────────────▶ ┘
         └─ or ──HTTP──▶ ESP32-C3 (act1033 --esp panel.local …)
+```
+
+A third, cloud-based mode keeps the ESP minimal: a **Cloudflare Worker** ([`cloudflare/`](cloudflare/)) renders
+text / shapes / animations into a finished PNG/GIF, and a thin **ESP32 client** ([`esp32-client/`](esp32-client/))
+downloads it and relays it to the panel over BLE. See [docs/RENDER_API.md](docs/RENDER_API.md).
+
+```
+ Cloudflare Worker ──HTTPS (PNG/GIF)──▶ ESP32-C3 client ──BLE──▶ BK-Light panel
 ```
 
 Both sides render the same things (text, Game of Life, GIFs) into a GIF that stays inside the panel and keeps
@@ -49,9 +57,11 @@ portal, open `http://panel.local/`.
 
 ```
 ACT1033_LED/
-├── esp32/        firmware (PlatformIO, Arduino, NimBLE): Wi-Fi, web UI, HTTP API, BLE client
-├── python/       act1033led package + CLI (bleak, optional Pillow) and offline tests
-└── docs/         PROTOCOL.md – the panel's BLE protocol and everything measured about it
+├── esp32/         standalone firmware (PlatformIO, Arduino, NimBLE): Wi-Fi, web UI, HTTP API, BLE client, on-device rendering
+├── esp32-client/  thin firmware for the cloud mode: downloads PNG/GIF from the Worker and relays it over BLE
+├── cloudflare/    Cloudflare Worker (TypeScript, wrangler): universal PNG/GIF renderer
+├── python/        act1033led package + CLI (bleak, optional Pillow) and offline tests
+└── docs/          PROTOCOL.md (BLE protocol), RENDER_API.md (Worker API), API_GUIDE.md (Wrocław transit API)
 ```
 
 ## Status
