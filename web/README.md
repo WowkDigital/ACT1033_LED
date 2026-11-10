@@ -20,9 +20,12 @@ is checking in. **Debug** shows the ESP's last check-in and poll interval, the s
 image downloads by the ESP, rejected tokens), the requests this page sent, and a "Copy report" button (no tokens in it). The data comes
 from `GET /panel/:id/debug`, so the Worker needs migration `0005_debug.sql` (`npm run migrate` in `cloudflare/`).
 
-The **Departures** tab picks a stop from the transit API: search by name, choose a pole (the map shows where each pole is; click a marker to switch),
-then tick lines and choose a direction from what actually runs there. A preview shows the next timetable departures for the chosen filters, and the
-Worker warns when they match nothing (that is what used to show as `NO DATA`).
+The **Departures** tab picks a stop from the transit API: search by name (every matching stop is a button; a single match opens by itself), choose
+a pole (the map shows where each pole is; click a marker to switch), then tick lines and choose a direction from what actually runs there. A preview
+shows the next timetable departures for the chosen filters, and the Worker warns when they match nothing (that is what used to show as `NO DATA`).
+**Extras** (countdown mode): the stop screen (name + clock + lines, every *n* s for *m* s, optional custom name, clock with or without seconds) and the
+departure animation. "What the panel will show" plays the board live, in step with the clock, built by the Worker's own code (`cloudflare/src/board.ts`),
+with the GIF size and anything that would be left out to fit the size budget.
 
 ## Admin page
 

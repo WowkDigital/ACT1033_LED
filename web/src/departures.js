@@ -3,6 +3,7 @@
 // Everything comes from the public transit API (docs/API_GUIDE.md). The result ends up in #m-stop (the pole code used),
 // #m-lines and #m-dir, which main.js sends to the Worker. The API merges the poles of one side, so one code covers tram + bus.
 import { api } from "./api.js";
+import { drawBoard, hideBoard, showBoard } from "./board-preview.js";
 import { ICONS, TYPE_NAME } from "./icons.js";
 import { showMap } from "./map.js";
 import { buildSides, clusterByName, lineType, toward } from "./stops.js";
@@ -171,15 +172,19 @@ function preview() {
 }
 async function runPreview() {
   const box = $("m-preview");
-  if (!group) return (box.hidden = true);
+  if (!group) {
+    hideBoard();
+    return (box.hidden = true);
+  }
   const mine = seq;
-  const q = new URLSearchParams({ stop: side().primary, mode: "schedule", limit: "4" });
+  const q = new URLSearchParams({ stop: side().primary, mode: "schedule", limit: "20" }); // 20: enough for the 500 s board preview
   if ($("m-lines").value) q.set("lines", $("m-lines").value);
   if ($("m-dir").value) q.set("dir", $("m-dir").value);
   box.hidden = false;
   try {
     const d = await get("/departures?" + q);
     if (mine !== seq) return;
+    showBoard(d.departures, d.stop || group.name);
     box.replaceChildren();
     if (!d.departures.length) {
       box.className = "preview warn";
@@ -191,7 +196,7 @@ async function runPreview() {
     h.className = "dim";
     h.textContent = "Next departures with these settings (timetable):";
     box.append(h);
-    for (const x of d.departures) {
+    for (const x of d.departures.slice(0, 4)) {
       const row = document.createElement("div");
       row.className = "mono";
       row.textContent = x.line.padEnd(5) + " " + (x.time || "") + "  in " + x.min + " min  → " + x.dir;
@@ -199,6 +204,7 @@ async function runPreview() {
     }
   } catch (e) {
     if (mine === seq) {
+      hideBoard();
       box.className = "preview warn";
       box.textContent = e.message;
     }
@@ -269,6 +275,15 @@ async function loadGroup(cluster, code, preset = {}) {
       };
     });
     if (!sides.length) throw new Error("No data for this stop");
+    if (sides.every((s) => !s.lines.length)) {
+      // the stop exists, but the transit API has no timetable for any of its poles (its database covers only part of the stops)
+      group = null;
+      $("m-pick").hidden = true;
+      say("m-stop-info", cluster.name + ": the transit API has no timetable for this stop yet, so it cannot be shown on the panel. The map below only shows where its poles are.", "err");
+      showMap($("m-map"), { sides: sides.map((s) => ({ lat: s.lat, lon: s.lon, poles: s.poles.map((p) => ({ code: p.code, type: "bus" })) })), selected: -1 }).catch(() => ($("m-map").hidden = true));
+      return;
+    }
+    sides.splice(0, sides.length, ...sides.filter((s) => s.lines.length)); // directions without any line are of no use
     group = { name: cluster.name, sides };
     await Promise.all(sides.map(ensureDirs)); // so every direction card can say where it goes
     if (mine !== seq) return;
@@ -313,6 +328,7 @@ export async function loadStop(code, preset = {}) {
 function clear() {
   seq++;
   group = null;
+  hideBoard();
   $("m-pick").hidden = true;
   $("m-map").hidden = true;
   say("m-stop-info", "");
@@ -320,25 +336,64 @@ function clear() {
   $("m-dir").replaceChildren(new Option("Any terminus", ""));
 }
 
-// ---------------------------------------------------------------- search box
+// ---------------------------------------------------------------- search box: the results are buttons, so every match is visible
 let searchTimer;
+let searchSeq = 0;
+let picked = null; // index in `found` of the stop being shown
+
+function resultsHint(text) {
+  const span = document.createElement("span");
+  span.className = "hint";
+  span.textContent = text;
+  $("m-results").replaceChildren(span);
+  $("m-results-count").textContent = "";
+}
+
+function renderResults() {
+  const box = $("m-results");
+  box.replaceChildren();
+  const total = {};
+  for (const c of found) total[c.name] = (total[c.name] || 0) + 1;
+  const seen = {};
+  found.forEach((c, i) => {
+    seen[c.name] = (seen[c.name] || 0) + 1;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.setAttribute("role", "option");
+    b.setAttribute("aria-selected", String(i === picked));
+    const name = document.createElement("span");
+    name.textContent = c.name + (total[c.name] > 1 ? " (" + seen[c.name] + ")" : "");
+    const info = document.createElement("small");
+    info.textContent = c.poles.length + (c.poles.length === 1 ? " pole" : " poles") + (total[c.name] > 1 ? " · another place with this name" : "");
+    b.append(name, info);
+    b.addEventListener("click", () => {
+      picked = i;
+      for (const x of box.children) x.setAttribute("aria-selected", String(x === b));
+      loadGroup(c, null);
+    });
+    box.append(b);
+  });
+  $("m-results-count").textContent = "(" + found.length + (found.length === 1 ? " stop)" : " stops)");
+}
+
 async function search() {
   const q = $("m-q").value.trim();
-  const sel = $("m-results");
-  if (q.length < 2) return;
+  const mine = ++searchSeq;
+  if (q.length < 2) {
+    found = [];
+    return resultsHint("Type at least 2 letters.");
+  }
+  resultsHint("Searching…");
   try {
-    found = clusterByName(await get("/search?q=" + enc(q)));
-    sel.replaceChildren();
-    if (!found.length) return sel.add(new Option("No stops found", ""));
-    sel.add(new Option("Choose a stop (" + found.length + ")", ""));
-    const seen = {};
-    found.forEach((c, i) => {
-      seen[c.name] = (seen[c.name] || 0) + 1;
-      const dup = found.filter((x) => x.name === c.name).length > 1 ? " · place " + seen[c.name] : "";
-      sel.add(new Option(c.name + dup + " · " + c.poles.length + (c.poles.length === 1 ? " pole" : " poles"), String(i)));
-    });
+    const list = clusterByName(await get("/search?q=" + enc(q)));
+    if (mine !== searchSeq) return;
+    found = list;
+    picked = null;
+    if (!found.length) return resultsHint("No stops match “" + q + "”.");
+    renderResults();
+    if (found.length === 1) $("m-results").firstElementChild.click(); // the only match: open it right away
   } catch {
-    say("m-stop-info", "Cannot reach the transit API", "err");
+    if (mine === searchSeq) resultsHint("Cannot reach the transit API.");
   }
 }
 
@@ -347,10 +402,15 @@ export function initDepartures() {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(search, 300);
   });
-  $("m-results").addEventListener("change", () => {
-    const c = found[Number($("m-results").value)];
-    if (c) loadGroup(c, null);
+  $("m-q").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    clearTimeout(searchTimer);
+    search();
   });
   $("m-stop").addEventListener("change", () => loadStop($("m-stop").value));
   $("m-dir").addEventListener("change", preview);
+  // the board preview follows the colour, the mode and the extras without asking the transit API again
+  for (const id of ["m-color", "m-mode", "m-info-on", "m-info-every", "m-info-for", "m-info-sec", "m-label", "m-anim"]) $(id).addEventListener("input", drawBoard);
+  $("m-mode").addEventListener("change", drawBoard);
 }

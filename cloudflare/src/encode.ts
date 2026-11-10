@@ -125,20 +125,54 @@ export function encodePng(frame: Frame, w: number, h: number, background: number
 }
 
 // ------------------------------------------------------------------ GIF
+/** Growable byte buffer (avoids `push(...array)` on large outputs). */
+class Bytes {
+  buf = new Uint8Array(4096);
+  n = 0;
+  private room(k: number) {
+    if (this.n + k <= this.buf.length) return;
+    const b = new Uint8Array(Math.max(this.buf.length * 2, this.n + k));
+    b.set(this.buf.subarray(0, this.n));
+    this.buf = b;
+  }
+  byte(x: number) {
+    if (this.n >= this.buf.length) this.room(1);
+    this.buf[this.n++] = x;
+  }
+  push(...v: number[]) {
+    this.room(v.length);
+    for (const x of v) this.buf[this.n++] = x;
+  }
+  add(v: Uint8Array) {
+    this.room(v.length);
+    this.buf.set(v, this.n);
+    this.n += v.length;
+  }
+  out() {
+    return this.buf.slice(0, this.n);
+  }
+}
+
+// LZW dictionary as flat arrays indexed by (prefix code << 8 | pixel); a stamp marks the entries of the current table,
+// so clearing the table is O(1). Shared between calls (the encoder is synchronous).
+const DICT = new Int32Array(4096 << 8);
+const STAMP = new Uint32Array(4096 << 8);
+let gen = 0;
+
 function lzw(pixels: Uint8Array, minCode = 4): Uint8Array {
   const clear = 1 << minCode;
   const eoi = clear + 1;
   let size = minCode + 1;
   let next = eoi + 1;
-  const out: number[] = [];
+  const out = new Bytes();
   let cur = 0;
   let nb = 0;
-  let table = new Map<number, number>();
+  gen++;
   const emit = (code: number) => {
     cur |= code << nb;
     nb += size;
     while (nb >= 8) {
-      out.push(cur & 255);
+      out.byte(cur & 255);
       cur >>>= 8;
       nb -= 8;
     }
@@ -148,17 +182,17 @@ function lzw(pixels: Uint8Array, minCode = 4): Uint8Array {
   for (let i = 1; i < pixels.length; i++) {
     const k = pixels[i]!;
     const key = (prefix << 8) | k;
-    const hit = table.get(key);
-    if (hit !== undefined) {
-      prefix = hit;
+    if (STAMP[key] === gen) {
+      prefix = DICT[key]!;
       continue;
     }
     emit(prefix);
-    table.set(key, next++);
+    STAMP[key] = gen;
+    DICT[key] = next++;
     if (next > 1 << size && size < 12) size++;
     if (next >= 4096) {
       emit(clear);
-      table = new Map();
+      gen++;
       size = minCode + 1;
       next = eoi + 1;
     }
@@ -168,8 +202,8 @@ function lzw(pixels: Uint8Array, minCode = 4): Uint8Array {
   next++;
   if (next > 1 << size && size < 12) size++;
   emit(eoi);
-  if (nb > 0) out.push(cur & 255);
-  return Uint8Array.from(out);
+  if (nb > 0) out.byte(cur & 255);
+  return out.out();
 }
 
 export interface GifOptions {
@@ -183,23 +217,33 @@ export function encodeGif(frames: Frame[], delaysMs: number[], w: number, h: num
   if (pal.length > 16)
     throw new RenderError(`GIF supports at most 16 colours (the panel needs one shared 16-entry table); the scene uses ${pal.length}`, 422);
   const index = new Map(pal.map((c, i) => [c, i]));
-  const b: number[] = [...ascii("GIF89a"), w & 255, w >> 8, h & 255, h >> 8, 0xf3, 0, 0];
+  const b = new Bytes();
+  b.push(...ascii("GIF89a"), w & 255, w >> 8, h & 255, h >> 8, 0xf3, 0, 0);
   for (let i = 0; i < 16; i++) b.push(...rgbOf(pal[i] ?? 0));
   b.push(0x21, 0xff, 0x0b, ...ascii("NETSCAPE2.0"), 3, 1, opt.loop & 255, opt.loop >> 8, 0);
+  const blocks = new Map<Frame, Uint8Array>(); // the same frame object (a repeated scene) is compressed once
   frames.forEach((f, n) => {
     const cs = Math.max(1, Math.round(delaysMs[n]! / 10));
     b.push(0x21, 0xf9, 4, 0x04, cs & 255, cs >> 8, 0, 0);
     b.push(0x2c, 0, 0, 0, 0, w & 255, w >> 8, h & 255, h >> 8, 0, 4);
-    const px = new Uint8Array(f.length);
-    for (let i = 0; i < f.length; i++) px[i] = index.get(f[i]!)!;
-    const data = lzw(px, 4);
-    for (let o = 0; o < data.length; o += 255) {
-      const part = data.subarray(o, o + 255);
-      b.push(part.length, ...part);
+    let data = blocks.get(f);
+    if (!data) {
+      const px = new Uint8Array(f.length);
+      for (let i = 0; i < f.length; i++) px[i] = index.get(f[i]!)!;
+      const raw = lzw(px, 4);
+      const sub = new Bytes();
+      for (let o = 0; o < raw.length; o += 255) {
+        const part = raw.subarray(o, o + 255);
+        sub.push(part.length);
+        sub.add(part);
+      }
+      sub.push(0);
+      data = sub.out();
+      blocks.set(f, data);
     }
-    b.push(0);
+    b.add(data);
   });
   b.push(0x3b);
   if (opt.nonce) b.push(...crypto.getRandomValues(new Uint8Array(4)));
-  return Uint8Array.from(b);
+  return b.out();
 }

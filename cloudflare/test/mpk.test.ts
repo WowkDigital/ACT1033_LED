@@ -39,6 +39,12 @@ const gifFrames = (b: Uint8Array) => {
   for (let i = 0; i < b.length - 1; i++) if (b[i] === 0x21 && b[i + 1] === 0xf9) n++;
   return n;
 };
+/** sum of all frame delays (1/100 s) */
+const gifTotalCs = (b: Uint8Array) => {
+  let n = 0;
+  for (let i = 0; i < b.length - 5; i++) if (b[i] === 0x21 && b[i + 1] === 0xf9 && b[i + 2] === 4) n += b[i + 4]! | (b[i + 5]! << 8);
+  return n;
+};
 const gifDelayCs = (b: Uint8Array) => {
   for (let i = 0; i < b.length - 5; i++) if (b[i] === 0x21 && b[i + 1] === 0xf9) return b[i + 4]! | (b[i + 5]! << 8);
   return -1;
@@ -55,7 +61,25 @@ const tick = (nowMs = Date.now()) => runAll(env, nowMs);
 
 // ---------------------------------------------------------------- pure functions
 test("config validation; seconds is the default mode", () => {
-  assert.deepEqual(parseConfig({ stop: "12020", lines: "13, 23", dir: "Kowale" }), { stop: "12020", lines: "13,23", dir: "Kowale", color: "#ffb000", mode: "seconds" });
+  assert.deepEqual(parseConfig({ stop: "12020", lines: "13, 23", dir: "Kowale" }), {
+    stop: "12020",
+    lines: "13,23",
+    dir: "Kowale",
+    color: "#ffb000",
+    mode: "seconds",
+    info_every: 40,
+    info_for: 10,
+    info_seconds: true,
+    label: "",
+    anim: true,
+  });
+  const off = parseConfig({ stop: "1", info_every: 0, anim: false, info_seconds: false, label: " Poleska " });
+  assert.deepEqual([off.info_every, off.anim, off.info_seconds, off.label], [0, false, false, "Poleska"]);
+  assert.equal(parseConfig({ stop: "1", info_every: 60, info_for: 15 }).info_for, 15);
+  assert.throws(() => parseConfig({ stop: "1", info_every: 10, info_for: 10 }), /info_every/);
+  assert.throws(() => parseConfig({ stop: "1", info_every: 5 }), /info_every/);
+  assert.throws(() => parseConfig({ stop: "1", info_for: 2.5 }), /info_for/);
+  assert.throws(() => parseConfig({ stop: "1", label: "x".repeat(25) }), /label/);
   assert.equal(parseConfig({ stop: "1", mode: "minutes" }).mode, "minutes");
   assert.throws(() => parseConfig({}), /stop/);
   assert.throws(() => parseConfig({ stop: "12 020" }), /stop/);
@@ -118,7 +142,7 @@ test("regeneration rules", () => {
 });
 
 // ---------------------------------------------------------------- through the Worker
-test("enabling the job (default mode) renders a 50-frame countdown immediately", async () => {
+test("enabling the job (default mode) renders a 500 s countdown with the extras immediately", async () => {
   tok = await (await call("/admin/panels", { method: "POST", token: ADMIN, body: JSON.stringify({ id: "bus" }) })).json();
   departures = [sched("13", 3), sched("23", 7), sched("134", 12)];
   assert.equal((await call("/panel/bus/mpk")).status, 401);
@@ -128,7 +152,13 @@ test("enabling the job (default mode) renders a 50-frame countdown immediately",
 
   const ok = await putMpk({ stop: "12020", lines: "13,23", dir: "Leśnica" });
   assert.equal(ok.status, 200);
-  const body = (await ok.json()) as { enabled: boolean; config: { mode: string }; stop_name: string; rows: { left: string; right: string }[] };
+  const body = (await ok.json()) as {
+    enabled: boolean;
+    config: { mode: string };
+    stop_name: string;
+    rows: { left: string; right: string }[];
+    gif: { size: number; frames: number; seconds: number; dropped: string[] };
+  };
   assert.equal(body.config.mode, "seconds");
   assert.equal(body.stop_name, "Budziszyńska");
   assert.deepEqual(body.rows.map((r) => r.left), ["13", "23"]);
@@ -136,7 +166,11 @@ test("enabling the job (default mode) renders a 50-frame countdown immediately",
   assert.ok(requested.at(-1)!.includes("limit=8") && requested.at(-1)!.includes("mode=schedule"), "the countdown is built from the timetable only");
   const img = await image();
   assert.equal(img.status, 200);
-  assert.equal(gifFrames(img.body), 50);
+  assert.equal(gifTotalCs(img.body), 50000, "the GIF covers 500 s");
+  assert.ok(gifFrames(img.body) > 50, "stop screens with a ticking clock add frames");
+  assert.deepEqual(body.gif.dropped, []);
+  assert.equal(body.gif.size, img.body.length);
+  assert.ok(img.body.length <= 40 * 1024, "within the size budget: " + img.body.length);
   assert.equal(img.poll, "3", "a fresh regeneration is picked up quickly");
 });
 
@@ -151,13 +185,35 @@ test("cron replaces the GIF when it is older than the refresh interval", async (
   await tick(Date.now() + 301_000);
   const after = await image();
   assert.notEqual(after.etag, before);
-  assert.equal(gifFrames(after.body), 50);
+  assert.equal(gifTotalCs(after.body), 50000);
 });
 
 test("poll hint: fast right after a regeneration, idle afterwards", async () => {
   assert.equal((await image()).poll, "3");
   await env.DB.prepare("UPDATE panels SET fresh_at = ?1 WHERE id = 'bus'").bind(Math.floor(Date.now() / 1000) - 60).run();
   assert.equal((await image()).poll, "30");
+});
+
+test("extras off: the plain countdown of 50 frames x 10 s", async () => {
+  departures = [sched("13", 3), sched("23", 7), sched("134", 12)];
+  const r = await putMpk({ stop: "12020", lines: "13,23", info_every: 0, anim: false });
+  assert.equal(r.status, 200);
+  const img = await image();
+  assert.equal(gifFrames(img.body), 50);
+  assert.equal(gifDelayCs(img.body), 1000);
+});
+
+test("a tight size budget gives the extras up instead of failing", async () => {
+  departures = [sched("13", 3), sched("23", 4), sched("13", 5), sched("23", 6), sched("13", 8)];
+  const tight = { ...env, MPK_MAX_BYTES: "9000" };
+  const r = await worker.fetch(
+    new Request("https://x/panel/bus/mpk", { method: "PUT", headers: { Authorization: "Bearer " + tok.write_token }, body: JSON.stringify({ stop: "12020" }) }),
+    tight,
+  );
+  const body = (await r.json()) as { gif: { size: number; dropped: string[]; seconds: number } };
+  assert.ok(body.gif.dropped.length > 0, "something was dropped");
+  assert.ok(body.gif.seconds >= 360, "still longer than the refresh interval");
+  assert.ok(body.gif.size <= 9000 || body.gif.dropped.includes("stop screen"), JSON.stringify(body.gif));
 });
 
 test("live vehicles never shorten the countdown (the reported bug: '1 min' for trams that just left)", async () => {

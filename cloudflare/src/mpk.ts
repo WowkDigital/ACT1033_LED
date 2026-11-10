@@ -6,13 +6,32 @@
 //    the TIMETABLE (exact HH:MM). Live GPS data is not used here: it only has rounded minutes, no heading (vehicles that just passed
 //    or go the other way look "1 min away") and would turn a countdown to the second into a guess.
 //    The panel plays the GIF by itself, so the countdown runs smoothly without a new upload every minute (every upload makes the
-//    panel flash). One GIF has 50 frames (500 s) and is replaced every 5 minutes.
+//    panel flash). One GIF covers 500 s and is replaced every 5 minutes. Optional extras (board.ts): a stop screen with a clock
+//    (default every 40 s for 10 s: "POLESKA 21:37:30" / "131, N") and a bus / tram driving off when a departure leaves.
+//    The GIF is kept under MPK_MAX_BYTES (40 KB) by giving up extras when needed (fitBoard).
 //  - "minutes": live vehicles + timetable ("hybrid"), a static picture ("13   12 min") rewritten whenever the minutes change.
 
 import { bearer } from "./auth.ts";
+import {
+  boardSegments,
+  drawSegments,
+  encodeBoard,
+  fitBoard,
+  formatRemaining,
+  rowElements,
+  sortLines,
+  toDeps,
+  upcoming,
+  warsawSecondsOfDay,
+  type BoardOptions,
+  type Dep,
+  type Row,
+} from "./board.ts";
 import { forbidden, getPanel, roleFor, storeImage, unauthorized, type Env, type PanelRow } from "./panels.ts";
 import { parseColor, render } from "./render.ts";
-import { RenderError, type Element, type FrameSpec } from "./types.ts";
+import { RenderError } from "./types.ts";
+
+export { formatRemaining, toDeps, type Dep, type Row };
 
 export const DEFAULT_TRANSIT_URL = "https://wroclaw-transit.wowk-digital.workers.dev";
 
@@ -24,18 +43,15 @@ export interface MpkConfig {
   dir: string;
   color: string;
   mode: Mode;
-}
-
-export interface Row {
-  left: string;
-  right: string;
-}
-
-/** One upcoming departure: `t` = epoch seconds, `exact` = known to the minute from the timetable (live vehicles only have rounded minutes). */
-export interface Dep {
-  l: string;
-  t: number;
-  x: boolean;
+  /** stop screen: starts every `info_every` s (0 = off) and stays `info_for` s */
+  info_every: number;
+  info_for: number;
+  /** clock on the stop screen with seconds (HH:MM:SS) or without (HH:MM) */
+  info_seconds: boolean;
+  /** name on the stop screen; empty = the stop name from the transit API */
+  label: string;
+  /** a bus / tram drives off its row when a departure leaves */
+  anim: boolean;
 }
 
 interface State {
@@ -59,7 +75,26 @@ export function parseConfig(input: unknown): MpkConfig {
   parseColor(color, 0); // validates
   const mode = str(o.mode) || "seconds";
   if (mode !== "seconds" && mode !== "minutes") throw new RenderError('"mode" must be "seconds" or "minutes"');
-  return { stop, lines, dir, color, mode };
+  const int = (v: unknown, d: number, name: string, lo: number, hi: number) => {
+    if (v === undefined || v === null || v === "") return d;
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < lo || n > hi) throw new RenderError(`"${name}" must be a whole number ${lo}..${hi}`);
+    return n;
+  };
+  const bool = (v: unknown, d: boolean) => (v === undefined || v === null ? d : v === true || v === "true" || v === 1);
+  const info_every = int(o.info_every, 40, "info_every", 0, 600);
+  const info_for = int(o.info_for, 10, "info_for", 1, 120);
+  if (info_every > 0 && (info_every < 10 || info_for >= info_every))
+    throw new RenderError('"info_every" must be 0 (off), or 10 s or more and longer than "info_for"');
+  const label = str(o.label);
+  // eslint-disable-next-line no-control-regex
+  if (label.length > 24 || /[\u0000-\u001f]/.test(label)) throw new RenderError('"label" is limited to 24 printable characters');
+  return { stop, lines, dir, color, mode, info_every, info_for, info_seconds: bool(o.info_seconds, true), label, anim: bool(o.anim, true) };
+}
+
+/** A stored configuration (older ones lack the newer fields) with the defaults filled in. */
+export function normalize(stored: unknown): MpkConfig {
+  return parseConfig({ mode: "seconds", ...(stored as object) });
 }
 
 // ---------------------------------------------------------------- settings
@@ -67,10 +102,11 @@ const num = (v: string | undefined, d: number) => (v !== undefined && Number.isF
 
 export function settings(env: Env) {
   return {
-    frames: Math.min(num(env.MPK_FRAMES, 50), 200), // frames per GIF
-    step: num(env.MPK_STEP_S, 10), // seconds per frame (the countdown resolution)
+    frames: Math.min(num(env.MPK_FRAMES, 50), 200), // countdown steps per GIF (50 x 10 s = 500 s)
+    step: num(env.MPK_STEP_S, 10), // seconds per countdown step (the countdown resolution)
     refresh: num(env.MPK_REFRESH_S, 300), // a GIF is replaced at the latest after this many seconds
     lead: num(env.MPK_LEAD_S, 8), // expected seconds between generation and the picture appearing on the panel
+    maxBytes: Math.min(num(env.MPK_MAX_BYTES, 40 * 1024), 60 * 1024), // GIF size budget (the Worker and the ESP accept up to 64 KB)
   };
 }
 
@@ -100,71 +136,36 @@ async function fetchRaw(env: Env, cfg: MpkConfig, limit: number, source: "schedu
   return { stop: String(data.stop ?? ""), list: data.departures ?? [] };
 }
 
-function warsawSecondsOfDay(ms: number): number {
-  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Warsaw", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).formatToParts(ms);
-  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? 0);
-  return get("hour") * 3600 + get("minute") * 60 + get("second");
-}
-
-/** Absolute departure times. Timetable rows have HH:MM (Warsaw time) -> exact; live vehicles only a rounded `min` -> approximate. */
-export function toDeps(list: RawDep[], nowMs: number, timetableOnly = false): Dep[] {
-  const nowS = Math.floor(nowMs / 1000);
-  const sod = warsawSecondsOfDay(nowMs);
-  const out: Dep[] = [];
-  for (const d of list) {
-    const line = String(d.line ?? "").slice(0, 5);
-    const m = d.time ? /^(\d{1,2}):(\d{2})$/.exec(d.time) : null;
-    if (m) {
-      let delta = Number(m[1]) * 3600 + Number(m[2]) * 60 - sod;
-      if (delta < -43200) delta += 86400; // after midnight
-      out.push({ l: line, t: nowS + delta, x: true });
-    } else if (!timetableOnly && d.min !== undefined && d.min !== "") {
-      const min = String(d.min).startsWith("<") ? 0.5 : Number(d.min);
-      if (Number.isFinite(min)) out.push({ l: line, t: nowS + Math.round(min * 60), x: false });
-    }
-  }
-  return out.sort((a, b) => a.t - b.t);
-}
-
 /** Stable identity of a configuration (field order must not matter). */
-export const cfgKey = (c: MpkConfig) => JSON.stringify([c.stop, c.lines, c.dir, c.color, c.mode]);
-
-const upcoming = (deps: Dep[], atS: number) => deps.filter((d) => d.t - atS > 0).slice(0, 2);
-
-/** "3m 10s" (resolution 10 s, floored), "45s" below a minute. */
-export function formatRemaining(seconds: number, step = 10): string {
-  const r = Math.max(0, Math.floor(seconds / step) * step);
-  const m = Math.floor(r / 60);
-  return m > 0 ? `${m}m ${String(r % 60).padStart(2, "0")}s` : `${r}s`;
-}
+export const cfgKey = (c: MpkConfig) =>
+  JSON.stringify([c.stop, c.lines, c.dir, c.color, c.mode, c.info_every, c.info_for, c.info_seconds, c.label, c.anim]);
 
 // ---------------------------------------------------------------- rendering
-const TOPS = [-2, 7]; // text box tops: glyph rows land on pixel rows 0-6 and 9-15
-
-function rowElements(rows: Row[], color: string): Element[] {
-  const els: Element[] = [];
-  if (rows.length === 0) els.push({ type: "text", text: "NO DATA", color, y: TOPS[0], align: "left" });
-  rows.forEach((r, i) => {
-    els.push({ type: "text", text: r.left || " ", color, y: TOPS[i], align: "left" });
-    els.push({ type: "text", text: r.right || " ", color, y: TOPS[i], align: "right" });
-  });
-  return els;
-}
-
 /** Two lines of 5x7 text as a static GIF (the "minutes" mode). */
 export function renderRows(rows: Row[], color: string): Uint8Array {
   return render({ format: "gif", background: "#000000", elements: rowElements(rows, color) }).body;
 }
 
-/** Countdown GIF: frame k shows the next two departures as they will be at startS + k*step. */
+/** Board options of a configuration. `stopName` and `lines` feed the stop screen. */
+export function boardOptions(cfg: MpkConfig, step: number, stopName: string, lines: string[]): BoardOptions {
+  return {
+    color: cfg.color,
+    step,
+    anim: cfg.anim,
+    info: cfg.info_every > 0 ? { every: cfg.info_every, dur: cfg.info_for, seconds: cfg.info_seconds, label: cfg.label || stopName, lines } : null,
+  };
+}
+
+/** Plain countdown GIF (no extras): the next two departures as they will be at startS + k*step. */
 export function renderCountdown(deps: Dep[], color: string, startS: number, frames: number, step: number): Uint8Array {
-  const specs: FrameSpec[] = [];
-  for (let k = 0; k < frames; k++) {
-    const at = startS + k * step;
-    const rows = upcoming(deps, at).map((d) => ({ left: d.l, right: formatRemaining(d.t - at, step) }));
-    specs.push({ duration: step * 1000, elements: rowElements(rows, color) });
-  }
-  return render({ format: "gif", background: "#000000", frames: specs }).body;
+  const opt: BoardOptions = { color, step, info: null, anim: false };
+  return encodeBoard(drawSegments(boardSegments(deps, startS, frames * step, opt, warsawSecondsOfDay(startS * 1000))));
+}
+
+/** Lines for the stop screen: the chosen ones, or every line found in the next departures. */
+export function infoLines(cfg: MpkConfig, list: RawDep[]): string[] {
+  const chosen = cfg.lines ? cfg.lines.split(",") : list.map((d) => String(d.line ?? ""));
+  return [...new Set(chosen.filter(Boolean))].sort(sortLines);
 }
 
 // ---------------------------------------------------------------- when must the GIF be replaced?
@@ -187,6 +188,8 @@ export interface RefreshResult {
   regenerated: boolean;
   stop: string;
   rows: Row[];
+  /** set when a countdown GIF was generated: its size, frames, length (s) and the extras given up to fit the size budget */
+  gif?: { size: number; frames: number; seconds: number; dropped: string[] };
 }
 
 /** Fetches, renders and stores. `force` = regenerate even if the stored GIF is still good (after a configuration change). */
@@ -210,7 +213,8 @@ export async function refreshPanel(
   }
 
   const s = settings(env);
-  const { stop, list } = await fetchRaw(env, cfg, 8, "schedule");
+  // the stop screen lists every line when none is chosen, so it needs a longer look-ahead
+  const { stop, list } = await fetchRaw(env, cfg, cfg.info_every > 0 && !cfg.lines ? 20 : 8, "schedule");
   const deps = toDeps(list, nowMs, true); // timetable rows only: a countdown to the second must not be built on rounded minutes
   const rowsNow = upcoming(deps, nowS).map((d) => ({ left: d.l, right: formatRemaining(d.t - nowS, s.step) }));
   const key = cfgKey(cfg);
@@ -224,10 +228,13 @@ export async function refreshPanel(
 
   // frame 0 = the moment the picture is expected to appear on the panel, aligned to the step so a timetable row counts 3m 10s, 3m 00s, ...
   const startS = Math.floor((nowS + s.lead) / s.step) * s.step;
-  const gif = deps.length ? renderCountdown(deps, cfg.color, startS, s.frames, s.step) : renderRows([], cfg.color);
-  const r = await storeImage(env, row, gif, "image/gif", false, true);
+  const horizon = s.frames * s.step;
+  const opt = boardOptions(cfg, s.step, stop, infoLines(cfg, list));
+  const fit = fitBoard(deps, startS, horizon, Math.min(horizon, s.refresh + 60), opt, warsawSecondsOfDay(startS * 1000), s.maxBytes);
+  const r = await storeImage(env, row, fit.gif, "image/gif", false, true);
   await env.DB.prepare("UPDATE panels SET mpk_state = ?1 WHERE id = ?2").bind(JSON.stringify({ key, genAt: nowS, deps }), row.id).run();
-  return { changed: r.changed, regenerated: true, stop, rows: rowsNow };
+  const gif = { size: fit.gif.length, frames: fit.frames, seconds: fit.horizonS, dropped: fit.dropped };
+  return { changed: r.changed, regenerated: true, stop, rows: rowsNow, gif };
 }
 
 /** Cron entry point: refresh every panel that has the departures job enabled. */
@@ -241,8 +248,7 @@ export async function runAll(env: Env, nowMs = Date.now()): Promise<void> {
   for (const p of results) {
     try {
       if (!p.mpk) continue;
-      const cfg = { mode: "seconds", ...(JSON.parse(p.mpk) as object) } as MpkConfig;
-      await refreshPanel(env, p, cfg, false, nowMs);
+      await refreshPanel(env, p, normalize(JSON.parse(p.mpk)), false, nowMs);
     } catch (e) {
       console.error("departures job failed for", p.id, e instanceof Error ? e.message : e);
     }
@@ -256,7 +262,7 @@ export async function mpkRoute(request: Request, env: Env, id: string): Promise<
   if (!role) throw unauthorized();
 
   if (request.method === "GET") {
-    return Response.json({ enabled: row.mpk_enabled === 1, config: row.mpk ? { mode: "seconds", ...JSON.parse(row.mpk) } : null });
+    return Response.json({ enabled: row.mpk_enabled === 1, config: row.mpk ? normalize(JSON.parse(row.mpk)) : null });
   }
   if (role === "read") throw forbidden();
 
@@ -275,7 +281,7 @@ export async function mpkRoute(request: Request, env: Env, id: string): Promise<
     const r = await refreshPanel(env, row, cfg, true); // fails fast on an unknown stop; nothing is saved then
     await env.DB.prepare("UPDATE panels SET mpk = ?1, mpk_enabled = 1 WHERE id = ?2").bind(JSON.stringify(cfg), id).run();
     const warning = r.rows.length ? undefined : "no timetable departures match this stop, lines and direction right now, so the panel shows NO DATA. Check the lines and direction.";
-    return Response.json({ ok: true, enabled: true, config: cfg, stop_name: r.stop, rows: r.rows, changed: r.changed, warning });
+    return Response.json({ ok: true, enabled: true, config: cfg, stop_name: r.stop, rows: r.rows, changed: r.changed, gif: r.gif, warning });
   }
   throw new RenderError("use GET, PUT or DELETE", 405);
 }

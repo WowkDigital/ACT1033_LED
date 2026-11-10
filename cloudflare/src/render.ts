@@ -29,7 +29,19 @@ interface Bitmap {
   px: Uint8Array;
 }
 
+const bitmapCache = new Map<string, Bitmap>(); // the departure board draws the same few strings hundreds of times
+
 export function textBitmap(text: string, scale: number): Bitmap {
+  const key = scale + "|" + text;
+  const hit = bitmapCache.get(key);
+  if (hit) return hit;
+  const bm = makeTextBitmap(text, scale);
+  if (bitmapCache.size > 2000) bitmapCache.clear();
+  bitmapCache.set(key, bm);
+  return bm;
+}
+
+function makeTextBitmap(text: string, scale: number): Bitmap {
   const [top, bottom] = scale === 1 ? [-2, 8] : [0, 6];
   const h = (bottom - top + 1) * scale;
   const items: [number, Record<string, string>][] = [];

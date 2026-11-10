@@ -21,6 +21,7 @@ export interface Env {
   MPK_STEP_S?: string;
   MPK_REFRESH_S?: string;
   MPK_LEAD_S?: string;
+  MPK_MAX_BYTES?: string;
   /** optional var: seconds of fast polling after an automatic regeneration (so the new GIF reaches the panel quickly) */
   FRESH_WINDOW_S?: string;
 }

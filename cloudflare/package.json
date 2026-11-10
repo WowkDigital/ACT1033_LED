@@ -7,7 +7,7 @@
     "dev": "wrangler dev -c wrangler.local.jsonc",
     "deploy": "wrangler deploy -c wrangler.local.jsonc",
     "migrate": "wrangler d1 migrations apply act1033-led --remote -c wrangler.local.jsonc",
-    "test": "node --test --disable-warning=ExperimentalWarning test/render.test.ts test/panels.test.ts test/mpk.test.ts",
+    "test": "node --test --disable-warning=ExperimentalWarning test/render.test.ts test/panels.test.ts test/mpk.test.ts test/board.test.ts",
     "check": "tsc --noEmit",
     "types": "wrangler types"
   },

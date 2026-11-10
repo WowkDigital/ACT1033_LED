@@ -120,10 +120,9 @@
     <section class="card">
       <h2>Public-transit departures</h2>
       <p class="hint">The Worker refreshes the next departures every minute, so the panel keeps running on its own. Sending any other picture to this panel switches this off.</p>
-      <div class="row">
-        <label>Find a stop <input id="m-q" placeholder="e.g. Budziszyńska" autocomplete="off"></label>
-        <label>Results <select id="m-results" size="1"><option value="">(type at least 2 letters)</option></select></label>
-      </div>
+      <label>Find a stop <input id="m-q" type="search" placeholder="e.g. Budziszyńska" autocomplete="off" spellcheck="false"></label>
+      <p class="lbl">Results <span id="m-results-count" class="hint"></span></p>
+      <div id="m-results" class="results" role="listbox" aria-label="Stops matching the search"><span class="hint">Type at least 2 letters.</span></div>
       <p class="hint">A stop has up to four poles: two directions, each with a tram and a bus pole. Pick the stop by name, then choose the direction and the transport. The map shows where the poles are (click a badge to choose it).</p>
       <p id="m-stop-info" class="status" role="status"></p>
       <div id="m-map" class="map" hidden aria-label="Map of the stop"></div>
@@ -141,19 +140,36 @@
         </label>
         <div id="m-preview" class="preview" hidden></div>
       </div>
-      <div class="row">
-        <label>Colour <input id="m-color" type="color" value="#ffb000"></label>
-      </div>
-      <details class="adv"><summary>Advanced</summary>
-        <label>Stop code (pole used for the timetable) <input id="m-stop" placeholder="12020" autocomplete="off"></label>
-        <label>Transit API <input id="m-api" type="url" value="https://wroclaw-transit.wowk-digital.workers.dev" autocomplete="off" spellcheck="false"></label>
-      </details>
       <label>Display
         <select id="m-mode">
           <option value="seconds">Countdown with seconds from the timetable (3m 10s, steps of 10 s)</option>
           <option value="minutes">Minutes, live vehicles + timetable (3 min)</option>
         </select>
       </label>
+      <div class="row">
+        <label>Colour <input id="m-color" type="color" value="#ffb000"></label>
+      </div>
+
+      <fieldset id="m-extras" class="extras">
+        <legend>Extras <span class="hint">(countdown mode)</span></legend>
+        <label class="check"><input id="m-info-on" type="checkbox" checked> Show the stop screen: stop name, clock and lines, in turn with the departures</label>
+        <div id="m-info-opts" class="row sub">
+          <label>Every (s) <input id="m-info-every" type="number" min="10" max="600" step="5" value="40" inputmode="numeric"></label>
+          <label>For (s) <input id="m-info-for" type="number" min="1" max="120" step="1" value="10" inputmode="numeric"></label>
+          <label>Name on the panel <input id="m-label" maxlength="24" placeholder="stop name" autocomplete="off"></label>
+          <label class="check"><input id="m-info-sec" type="checkbox" checked> Clock with seconds (HH:MM:SS)</label>
+        </div>
+        <label class="check"><input id="m-anim" type="checkbox" checked> Animation when a vehicle leaves (a bus / tram drives off its row)</label>
+      </fieldset>
+
+      <div id="m-board-box" class="board" hidden>
+        <p class="lbl">What the panel will show <span id="m-board-note" class="hint"></span></p>
+        <canvas id="m-board" width="64" height="16" aria-label="Live preview of the departure board"></canvas>
+      </div>
+      <details class="adv"><summary>Advanced</summary>
+        <label>Stop code (pole used for the timetable) <input id="m-stop" placeholder="12020" autocomplete="off"></label>
+        <label>Transit API <input id="m-api" type="url" value="https://wroclaw-transit.wowk-digital.workers.dev" autocomplete="off" spellcheck="false"></label>
+      </details>
       <div class="row actions">
         <button id="m-stop-btn" type="button" class="secondary">Stop departures</button>
         <button id="m-start" type="button" class="primary">Start departures</button>

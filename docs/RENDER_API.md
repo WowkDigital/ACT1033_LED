@@ -93,17 +93,32 @@ countdown needs no upload every minute (every upload makes the panel flash for ~
   (a departure moved by more than 20 s, a different line first, a departure vanished).
 - An automatic replacement gives the ESP a short fast-poll window (`FRESH_WINDOW_S`, 20 s) so the new GIF reaches the panel within seconds.
 
+**Extras of the `seconds` mode** (`cloudflare/src/board.ts`, on by default, each can be switched off):
+- **Stop screen** (`info_every` 40, `info_for` 10): every 40 s, for 10 s, the panel shows the stop name and a clock on the first row and the lines on the second,
+  e.g. `POLESKA 21:37:30` / `131, N`. The window is placed between the whole-minute marks (timetable departures happen on whole minutes), so it never hides
+  a departure (with 40 s: at :05-:15, :25-:35, :45-:55 …). Text that does not fit 64 px switches to a 3×5 font, then the name is cut (set `label` to a short name);
+  too many lines end with `+`. `info_seconds: false` shows `HH:MM` (one frame per screen instead of one per second, a much smaller GIF).
+- **Departure animation** (`anim`): when a vehicle leaves, a bus or tram sprite (by line number: 0L, 0P and 1-33 are trams) carrying its number drives off
+  its row (16 frames, 0.8 s); the other row keeps counting.
+- **Size budget.** The GIF is a timeline: identical consecutive frames are merged (at most 10 s per frame), so a typical GIF with all extras is ~25-35 KB
+  (~140 B per frame) against ~7 KB for the plain countdown. It must stay under `MPK_MAX_BYTES` (default 40 KB; the Worker and the ESP accept 64 KB, and a bigger
+  GIF takes longer over BLE: ≈2 s for 29 KB). If it would not, the Worker gives things up in this order: a shorter GIF (360 s instead of 500 s), the animation,
+  the clock's seconds, the stop screen. The PUT answer reports `gif: {size, frames, seconds, dropped}`.
+
 **Mode `minutes`** - live vehicles + timetable (`mode=hybrid`) as a static picture `13   12 min`, rewritten whenever the minutes change. Use it when you want delays
 and vehicles that are really on their way; use `dir` (a terminus or stop that lies in your direction of travel) so vehicles going the other way are filtered out.
 
 | Request | Token | Result |
 |---|---|---|
-| `PUT /panel/:id/mpk` `{"stop":"12020","lines":"13,23","dir":"Stadion Olimpijski","color":"#ffb000","mode":"seconds"}` | write / admin | validates, renders immediately, enables the job; answers with `stop_name` and `rows` |
+| `PUT /panel/:id/mpk` `{"stop":"12020","lines":"13,23","dir":"Stadion Olimpijski","color":"#ffb000","mode":"seconds","info_every":40,"info_for":10,"info_seconds":true,"label":"","anim":true}` | write / admin | validates, renders immediately, enables the job; answers with `stop_name`, `rows` and `gif` |
 | `GET /panel/:id/mpk` | any panel token | `{enabled, config}` |
 | `DELETE /panel/:id/mpk` | write / admin | disables the job (the configuration is kept) |
 
 `stop` is a stop code (letters and digits); `lines` and `dir` are optional filters; `mode` is `seconds` (default) or `minutes`.
-Optional Worker variables: `MPK_FRAMES` (50), `MPK_STEP_S` (10), `MPK_REFRESH_S` (300), `MPK_LEAD_S` (8), `FRESH_WINDOW_S` (20).
+Extras (seconds mode only): `info_every` 0 (off) or 10-600 s, `info_for` 1-120 s and shorter than `info_every`, `info_seconds`, `label` (≤ 24 characters,
+empty = the stop name from the transit API), `anim`. A stored configuration without these fields gets the defaults.
+Optional Worker variables: `MPK_FRAMES` (50 countdown steps = 500 s), `MPK_STEP_S` (10), `MPK_REFRESH_S` (300), `MPK_LEAD_S` (8), `MPK_MAX_BYTES` (40960),
+`FRESH_WINDOW_S` (20). Generating a GIF with all extras takes ~10-15 ms of CPU, once per 5 minutes.
 **A manual upload (`PUT /panel/:id`) switches the job off** so the person's picture stays; automatic updates never trigger the 3-minute burst polling
 (`X-Poll-After` follows manual changes, plus a 20 s window after an automatic replacement).
 

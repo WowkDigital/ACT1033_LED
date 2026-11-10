@@ -134,3 +134,20 @@ details.adv summary { cursor: pointer; margin-bottom: 8px; }
 .mb-badge .ico { width: 14px; height: 14px; vertical-align: 0; }
 .mb.on .mb-badge { border-color: var(--accent); background: var(--accent); color: var(--accent-text); }
 .mb-badge:hover { transform: scale(1.06); }
+
+/* stop search results as buttons, extras, board preview */
+.results { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; max-height: 220px; overflow: auto; }
+.results button { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 0; padding: 6px 12px; border-radius: 8px; text-align: left; line-height: 1.25; }
+.results button small { color: var(--muted); font-size: 12px; }
+.results button[aria-selected=true] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.results button:hover { border-color: var(--accent); }
+.results .hint { padding: 6px 0; }
+fieldset.extras { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px 2px; margin: 0 0 12px; }
+fieldset.extras legend { font-size: 14px; color: var(--muted); padding: 0 4px; }
+fieldset.extras > label.check { margin-bottom: 10px; color: var(--text); }
+fieldset.extras:disabled { opacity: 0.55; }
+.row.sub { padding-left: 26px; align-items: flex-end; }
+.row.sub > label { flex: 1 1 110px; }
+.row.sub > label.check { flex: 2 1 200px; margin-bottom: 12px; }
+.board { margin: 0 0 12px; }
+#m-board { display: block; width: 100%; max-width: 512px; image-rendering: pixelated; background: #000; border: 1px solid var(--border); border-radius: 8px; }

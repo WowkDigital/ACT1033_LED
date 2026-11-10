@@ -6,6 +6,7 @@ import { H, W, lifeFrames } from "./life.js";
 import { PALETTES } from "./blobs.js";
 import { blobFrames } from "./blobs-render.js";
 import { initDepartures, loadStop } from "./departures.js";
+import { extrasError, extrasFromForm, extrasToForm, stopBoard, syncExtras } from "./board-preview.js";
 import { api, clearLog, setLogListener } from "./api.js";
 import { buildReport, chipFor, renderDebug, renderError, renderFilters, renderLog } from "./debug.js";
 
@@ -286,6 +287,7 @@ async function mpkLoad() {
       loadStop(j.config.stop, { lines: j.config.lines || "", dir: j.config.dir || "" });
       $("m-color").value = j.config.color || "#ffb000";
       $("m-mode").value = j.config.mode || "seconds";
+      extrasToForm(j.config);
     }
     say("m-status", j.enabled ? "Departures are running on the Worker (stop " + j.config.stop + ")" : "Departures are off", j.enabled ? "ok" : "");
   } catch {
@@ -294,18 +296,20 @@ async function mpkLoad() {
 }
 
 async function mpkStart() {
+  if (extrasError()) return say("m-status", extrasError(), "err");
   say("m-status", "Starting…");
   try {
     const c = connection();
     const res = await api(c.url + "/mpk", {
       method: "PUT",
       headers: { ...c.auth, "Content-Type": "application/json" },
-      body: JSON.stringify({ stop: $("m-stop").value, lines: $("m-lines").value, dir: $("m-dir").value, color: $("m-color").value, mode: $("m-mode").value }),
+      body: JSON.stringify({ stop: $("m-stop").value, lines: $("m-lines").value, dir: $("m-dir").value, color: $("m-color").value, mode: $("m-mode").value, ...extrasFromForm() }),
     });
     if (!res.ok) return say("m-status", await explain(res), "err");
     const j = await res.json();
     if (j.warning) return say("m-status", "Saved, but: " + j.warning, "err");
-    say("m-status", "Running. " + mpkSummary(j) + ". The ESP picks it up within about 30 s; " + (j.config.mode === "seconds" ? "the panel counts down by itself and the Worker replaces the animation every 5 minutes." : "the Worker refreshes it every minute."), "ok");
+    const g = j.gif ? " (GIF " + (j.gif.size / 1024).toFixed(1) + " KB" + (j.gif.dropped.length ? ", left out to fit: " + j.gif.dropped.join(", ") : "") + ")" : "";
+    say("m-status", "Running. " + mpkSummary(j) + ". The ESP picks it up within about 30 s; " + (j.config.mode === "seconds" ? "the panel counts down by itself and the Worker replaces the animation every 5 minutes" + g + "." : "the Worker refreshes it every minute."), "ok");
     persist();
   } catch (e) {
     say("m-status", e instanceof TypeError ? "Cannot reach the Worker (check the URL; CORS or network)" : e.message, "err");
@@ -324,6 +328,7 @@ async function mpkStop() {
 }
 
 initDepartures();
+syncExtras();
 $("m-start").addEventListener("click", mpkStart);
 $("m-stop-btn").addEventListener("click", mpkStop);
 
@@ -351,6 +356,7 @@ function show(next, remember = true) {
   }
   if (view === "send") refresh();
   else stopPlayer();
+  if (view !== "mpk") stopBoard();
   if (view === "mpk") mpkLoad();
   if (view === "debug") pollDebug();
   schedulePolling();
