@@ -104,7 +104,7 @@ countdown needs no upload every minute (every upload makes the panel flash for ~
   the other row stays exactly as it was until the animation ends, then both rows move on to the next two departures. With the stop screen every 40 s the 5 s animation ends exactly when the screen starts.
 - **Timed at delivery.** The ESP checks only every 30 s when idle, so a GIF made by the cron job would reach the panel 0-30 s later than planned (measured with a
   camera: the panel's clock was 38 s late). When the ESP (read token) downloads a changed image, the Worker rebuilds the GIF from the stored timetable with its
-  first frame at *download + `MPK_DELIVERY_LEAD_S`* (default 9 s: download + BLE upload + the panel's switch; measured: the panel then shows the time within about ±1.5 s, the rest is BLE connect jitter), cut to 1/100 s rather than rounded to 10 s.
+  first frame at *download + `MPK_DELIVERY_LEAD_S`* (default 8.5 s: download + BLE upload + the panel's switch; measured: the panel then shows the time within about ±1.5 s, the rest is BLE connect jitter), cut to 1/100 s rather than rounded to 10 s.
 - **Size budget.** The GIF is a timeline: identical consecutive frames are merged (at most 10 s per frame), so a typical GIF with all extras is ~25-35 KB
   (~140 B per frame) against ~7 KB for the plain countdown. It must stay under `MPK_MAX_BYTES` (default 40 KB; the Worker and the ESP accept 64 KB, and a bigger
   GIF takes longer over BLE: ≈2 s for 29 KB). If it would not, the Worker gives things up in this order: a shorter GIF (360 s instead of 500 s), the animation,
@@ -122,7 +122,7 @@ and vehicles that are really on their way; use `dir` (a terminus or stop that li
 `stop` is a stop code (letters and digits); `lines` and `dir` are optional filters; `mode` is `seconds` (default) or `minutes`.
 Extras (seconds mode only): `info_every` 0 (off) or 10-600 s, `info_for` 1-120 s and shorter than `info_every`, `info_seconds` (default false = HH:MM),
 `label` (≤ 24 characters, empty = the stop name from the transit API), `anim`, `anim_s` (0.5-10, default 3). A stored configuration without these fields gets the defaults.
-Optional Worker variables: `MPK_FRAMES` (50 countdown steps = 500 s), `MPK_STEP_S` (10), `MPK_REFRESH_S` (300), `MPK_LEAD_S` (8), `MPK_DELIVERY_LEAD_S` (9, may be fractional), `MPK_MAX_BYTES` (40960),
+Optional Worker variables: `MPK_FRAMES` (50 countdown steps = 500 s), `MPK_STEP_S` (10), `MPK_REFRESH_S` (300), `MPK_LEAD_S` (8), `MPK_DELIVERY_LEAD_S` (8.5, may be fractional), `MPK_MAX_BYTES` (40960),
 `FRESH_WINDOW_S` (20). Generating a GIF with all extras takes ~10-15 ms of CPU, once per 5 minutes.
 **A manual upload (`PUT /panel/:id`) switches the job off** so the person's picture stays; automatic updates never trigger the 3-minute burst polling
 (`X-Poll-After` follows manual changes, plus a 20 s window after an automatic replacement).

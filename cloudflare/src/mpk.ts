@@ -116,7 +116,7 @@ export function settings(env: Env) {
     step: num(env.MPK_STEP_S, 10), // seconds per countdown step (the countdown resolution)
     refresh: num(env.MPK_REFRESH_S, 300), // a GIF is replaced at the latest after this many seconds
     lead: num(env.MPK_LEAD_S, 8), // expected seconds between generation and the picture appearing on the panel (used until the ESP downloads it)
-    deliveryLead: Number.isFinite(Number(env.MPK_DELIVERY_LEAD_S)) && env.MPK_DELIVERY_LEAD_S ? Number(env.MPK_DELIVERY_LEAD_S) : 9, // s from the ESP's download to the picture on the panel; may be fractional; 9 measured with a camera
+    deliveryLead: Number.isFinite(Number(env.MPK_DELIVERY_LEAD_S)) && env.MPK_DELIVERY_LEAD_S ? Number(env.MPK_DELIVERY_LEAD_S) : 8.5, // s from the ESP's download to the picture on the panel; may be fractional; 8.5 = mean of camera measurements (7.7-9.5)
     maxBytes: Math.min(num(env.MPK_MAX_BYTES, 40 * 1024), 60 * 1024), // GIF size budget (the Worker and the ESP accept up to 64 KB)
   };
 }

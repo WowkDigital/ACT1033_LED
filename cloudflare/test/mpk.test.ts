@@ -220,7 +220,7 @@ test("the ESP's download re-times the countdown: frame 0 = download + MPK_DELIVE
   const again = await call("/panel/bus/image", { token: tok.read_token, headers: { "If-None-Match": etag! } });
   assert.equal(again.status, 304);
   // the first frame is cut so that it ends on a step boundary counted from download + lead
-  const lead = 9;
+  const lead = 8.5;
   const first = gifDelayCs(new Uint8Array(await (await call("/panel/bus/image", { token: tok.write_token })).arrayBuffer()));
   const showMs = Date.now() + lead * 1000;
   const expect = Math.round((10_000 - (showMs % 10_000)) / 10);
