@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   ANIM_FRAMES,
-  animCs,
+  animOffset,
+  animStartCs,
   bigWidth,
   boardSegments,
   drawSegments,
@@ -66,19 +67,27 @@ test("HH:MM clock: a stop screen is a single frame unless the minute changes", (
   assert.equal(at(segs, 5).cs, 1000, "one 10 s frame");
 });
 
-test("departure animation: the vehicle drives off its row, the second row keeps counting", () => {
+test("departure animation: the vehicle appears next to the number and pulls it off to the right in 5 s", () => {
   const segs = boardSegments(deps, START, 500, opt(), SOD);
   const first = at(segs, 120);
-  const cs = animCs(3000);
-  assert.equal(cs * ANIM_FRAMES, 288, "about 3 s by default");
-  assert.equal(first.cs, cs);
   assert.ok(hasBitmap(first.elements), "sprite");
-  assert.deepEqual(texts(first.elements), ["131", "N", "2m 00s"], "the leaving line rides on the sprite; N still counts");
-  let t = 120 * 100;
-  for (let k = 0; k < ANIM_FRAMES; k++, t += cs) assert.ok(hasBitmap(at(segs, t / 100).elements));
-  assert.deepEqual(texts(at(segs, 124).elements), ["N", "2m 00s", "7", "5m 00s"], "after the animation the next departure moves up");
+  assert.deepEqual(texts(first.elements), ["131", "N", "2m 10s"], "the second row stays as it was before the departure");
+  assert.deepEqual(texts(at(segs, 119).elements), ["131", "10s", "N", "2m 10s"]);
+  assert.deepEqual(texts(at(segs, 124.5).elements).slice(1), ["N", "2m 10s"], "frozen until the animation ends");
+  const num = first.elements.find((e) => e.type === "text" && e.text === "131") as { x: number };
+  const car = first.elements.find((e) => e.type === "bitmap") as { x: number };
+  assert.equal(num.x, 0, "the number stays where it was");
+  assert.equal(car.x, bigWidth("131") + 2, "the vehicle appears right of it");
+  assert.equal(animStartCs(ANIM_FRAMES), 500, "5 s by default");
+  assert.equal(animOffset(0), 0);
+  assert.ok(animOffset(ANIM_FRAMES - 1) > 55, "almost gone at the end");
+  for (let k = 1; k < ANIM_FRAMES; k++) assert.ok(animOffset(k) >= animOffset(k - 1), "it only moves right, speeding up");
+  const late = at(segs, 124).elements.find((e) => e.type === "text" && e.text === "131") as { x: number };
+  assert.ok(late.x > 0, "after 4 s the number is being pulled away");
+  assert.deepEqual(texts(at(segs, 125).elements)[0], "POLESKA", "the 5 s animation ends exactly where the stop screen starts (:05)");
+  const plain = boardSegments(deps, START, 500, opt({ info: null }), SOD);
+  assert.deepEqual(texts(at(plain, 125).elements), ["N", "2m 00s", "7", "5m 00s"], "after the animation the next departure moves up");
   const quick = boardSegments(deps, START, 500, opt({ animMs: 1000 }), SOD);
-  assert.equal(at(quick, 120).cs, animCs(1000));
   assert.ok(!hasBitmap(at(quick, 121.1).elements), "a 1 s animation is over after a second");
   const none = boardSegments(deps, START, 500, opt({ anim: false }), SOD);
   assert.ok(!hasBitmap(at(none, 120).elements));

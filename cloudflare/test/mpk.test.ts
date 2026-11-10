@@ -73,7 +73,7 @@ test("config validation; seconds is the default mode", () => {
     info_seconds: false,
     label: "",
     anim: true,
-    anim_s: 3,
+    anim_s: 5,
   });
   const off = parseConfig({ stop: "1", info_every: 0, anim: false, info_seconds: false, label: " Poleska " });
   assert.deepEqual([off.info_every, off.anim, off.info_seconds, off.label], [0, false, false, "Poleska"]);
@@ -220,7 +220,7 @@ test("the ESP's download re-times the countdown: frame 0 = download + MPK_DELIVE
   const again = await call("/panel/bus/image", { token: tok.read_token, headers: { "If-None-Match": etag! } });
   assert.equal(again.status, 304);
   // the first frame is cut so that it ends on a step boundary counted from download + lead
-  const lead = 7;
+  const lead = 9;
   const first = gifDelayCs(new Uint8Array(await (await call("/panel/bus/image", { token: tok.write_token })).arrayBuffer()));
   const showMs = Date.now() + lead * 1000;
   const expect = Math.round((10_000 - (showMs % 10_000)) / 10);

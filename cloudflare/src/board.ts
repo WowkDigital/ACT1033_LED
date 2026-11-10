@@ -6,7 +6,7 @@
 //  - stop screen (optional): every `every` seconds, for `dur` seconds, "POLESKA 21:37" + the lines ("131, N"), 5x7 capitals;
 //    when the name and the clock do not fit one row, the clock moves to the second row (right), next to the lines;
 //  - departure animation (optional): when a vehicle leaves, a bus / tram sprite carrying its number drives off its row
-//    (`animMs`, default 3 s).
+//    (`animMs`, default 5 s): it appears next to the number, then pulls the number off to the right.
 // Consecutive identical frames are merged, so a still picture costs one frame however long it stays.
 
 import { encodeGif } from "./encode.ts";
@@ -44,7 +44,7 @@ export interface BoardOptions {
   step: number;
   info: InfoOptions | null;
   anim: boolean;
-  /** how long the departure animation lasts, ms (default 3000) */
+  /** how long the departure animation lasts, ms (default 5000) */
   animMs?: number;
 }
 
@@ -124,11 +124,22 @@ export const SPRITES: Record<"bus" | "tram", string[]> = {
   ],
 };
 
-/** Departure animation: the sprite moves 2 px per frame, 32 frames to cross the 64 px; the frame time follows `animMs`. */
-export const ANIM_PX = 2;
-export const ANIM_MS = 3000;
-/** 1/100 s per animation frame for an animation of `ms` (at least 2 cs, the panel handles 1 cs). */
-export const animCs = (ms = ANIM_MS) => Math.max(2, Math.round(ms / 10 / ANIM_FRAMES));
+/**
+ * Departure animation (default 5 s): the vehicle appears right of the line number, waits a moment, then drives off to the right
+ * pulling the number behind it, speeding up like a real one (ease-in), until both have left the 64 px.
+ */
+export const ANIM_MS = 5000;
+/** frames of the animation (equal times; the first ones hold still, identical frames are merged into one) */
+export const ANIM_FRAMES = 40;
+/** share of the animation the vehicle stands still before it moves */
+const ANIM_HOLD = 0.2;
+/** horizontal offset of the number + vehicle in frame `k` */
+export function animOffset(k: number): number {
+  const p = Math.max(0, (k / ANIM_FRAMES - ANIM_HOLD) / (1 - ANIM_HOLD));
+  return Math.round(PANEL_W * p * p);
+}
+/** start of frame `k` in 1/100 s after the departure, for an animation of `ms` */
+export const animStartCs = (k: number, ms = ANIM_MS) => Math.round((k * Math.max(200, ms)) / 10 / ANIM_FRAMES);
 
 // ---------------------------------------------------------------- scene pieces
 const TOPS = [-2, 7]; // big text box tops: glyph rows land on pixel rows 0-6 and 9-15
@@ -150,15 +161,14 @@ export function rowElements(rows: Row[], color: string): Element[] {
   return els;
 }
 
-/** Animation frames: the sprite + its number start right-aligned and drive left until they are gone (64 px). */
-export const ANIM_FRAMES = Math.ceil(PANEL_W / ANIM_PX);
+
+/** the sprites face left; the departing vehicle drives to the right */
+const facingRight = (rows: string[]) => rows.map((r) => [...r].reverse().join(""));
 
 function vehicleRow(els: Element[], i: number, line: string, k: number, color: string): void {
-  const sprite = SPRITES[lineType(line)];
-  const groupW = sprite[0]!.length + 2 + bigWidth(line);
-  const x = PANEL_W - groupW - k * ANIM_PX;
-  els.push({ type: "bitmap", rows: sprite, x, y: ROW_Y[i], color });
-  els.push({ type: "text", text: line || " ", color, x: x + sprite[0]!.length + 2, y: TOPS[i] });
+  const x = animOffset(k);
+  els.push({ type: "text", text: line || " ", color, x, y: TOPS[i] });
+  els.push({ type: "bitmap", rows: facingRight(SPRITES[lineType(line)]), x: x + bigWidth(line || " ") + 2, y: ROW_Y[i], color });
 }
 
 const put = (els: Element[], row: number, text: string, x: number, color: string) => {
@@ -261,7 +271,7 @@ export function boardSegments(deps: Dep[], startS: number, horizonS: number, opt
   }
   // a departure animation plays when a vehicle leaves (not during a stop screen)
   const leaving = new Map<number, number>(); // departure time -> frames
-  const aCs = animCs(opt.animMs);
+  const animMs = opt.animMs ?? ANIM_MS;
   if (opt.anim)
     for (const d of deps) {
       if (d.t <= startS || d.t >= startS + horizonS || inInfo(d.t) || leaving.has(d.t)) continue;
@@ -269,7 +279,7 @@ export function boardSegments(deps: Dep[], startS: number, horizonS: number, opt
       if (!before.length) continue;
       const n = ANIM_FRAMES;
       leaving.set(d.t, n);
-      for (let k = 0; k <= n; k++) add((d.t - startS) * 100 + k * aCs);
+      for (let k = 0; k <= n; k++) add((d.t - startS) * 100 + animStartCs(k, animMs));
     }
 
   const stateAt = (cs: number): Element[] => {
@@ -280,10 +290,14 @@ export function boardSegments(deps: Dep[], startS: number, horizonS: number, opt
       return infoElements(info.label, clock, info.lines, color);
     }
     for (const [td, n] of leaving) {
-      const k = Math.floor((cs - (td - startS) * 100) / aCs); // integer maths: epoch seconds + 0.05 s lose precision
-      if (k < 0 || k >= n) continue;
+      const rel = cs - (td - startS) * 100; // integer maths: epoch seconds + 0.05 s lose precision
+      if (rel < 0 || rel >= animStartCs(n, animMs)) continue;
+      let k = 0;
+      while (k + 1 < n && animStartCs(k + 1, animMs) <= rel) k++;
+      // only the leaving row moves; the other row stays exactly as it was just before the departure until the animation ends
+      const frozen = startS + Math.floor((td - 1 - startS) / step) * step;
       const els: Element[] = [];
-      upcoming(deps, td - 0.5).forEach((d, i) => (d.t === td ? vehicleRow(els, i, d.l, k, color) : countdownRow(els, i, d, atStep, step, color)));
+      upcoming(deps, td - 0.5).forEach((d, i) => (d.t === td ? vehicleRow(els, i, d.l, k, color) : countdownRow(els, i, d, frozen, step, color)));
       return els;
     }
     const rows = upcoming(deps, atStep);

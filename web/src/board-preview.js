@@ -26,7 +26,7 @@ export function extrasFromForm() {
     info_seconds: $("m-info-clock").value === "hms",
     label: $("m-label").value.trim(),
     anim: $("m-anim").checked,
-    anim_s: Math.min(10, Math.max(0.5, Number($("m-anim-s").value) || 3)),
+    anim_s: Math.min(10, Math.max(0.5, Number($("m-anim-s").value) || 5)),
   };
 }
 
@@ -38,7 +38,7 @@ export function extrasToForm(cfg) {
   $("m-info-clock").value = cfg.info_seconds ? "hms" : "hm";
   $("m-label").value = cfg.label || "";
   $("m-anim").checked = cfg.anim !== false;
-  $("m-anim-s").value = cfg.anim_s || 3;
+  $("m-anim-s").value = cfg.anim_s || 5;
   syncExtras();
 }
 
