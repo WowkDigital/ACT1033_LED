@@ -411,6 +411,6 @@ export function initDepartures() {
   $("m-stop").addEventListener("change", () => loadStop($("m-stop").value));
   $("m-dir").addEventListener("change", preview);
   // the board preview follows the colour, the mode and the extras without asking the transit API again
-  for (const id of ["m-color", "m-mode", "m-info-on", "m-info-every", "m-info-for", "m-info-sec", "m-label", "m-anim"]) $(id).addEventListener("input", drawBoard);
+  for (const id of ["m-color", "m-mode", "m-info-on", "m-info-every", "m-info-for", "m-info-clock", "m-label", "m-anim", "m-anim-s"]) $(id).addEventListener("input", drawBoard);
   $("m-mode").addEventListener("change", drawBoard);
 }

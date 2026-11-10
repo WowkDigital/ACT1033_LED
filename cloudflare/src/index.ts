@@ -23,7 +23,7 @@ import {
   tokenIsValid,
   type Env,
 } from "./panels.ts";
-import { mpkRoute, runAll } from "./mpk.ts";
+import { mpkRoute, retimeForDelivery, runAll } from "./mpk.ts";
 import { render } from "./render.ts";
 import { RenderError, type Element, type Spec } from "./types.ts";
 
@@ -148,7 +148,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
     }
     if (m[2]) {
       if (method !== "GET") throw new RenderError("use GET", 405);
-      return panelImage(request, env, id);
+      return panelImage(request, env, id, (row) => retimeForDelivery(env, row));
     }
     if (method === "PUT") return panelPut(request, env, id);
     if (method === "GET") return panelMeta(request, env, id);

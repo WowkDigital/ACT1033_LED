@@ -7,7 +7,7 @@
 //    or go the other way look "1 min away") and would turn a countdown to the second into a guess.
 //    The panel plays the GIF by itself, so the countdown runs smoothly without a new upload every minute (every upload makes the
 //    panel flash). One GIF covers 500 s and is replaced every 5 minutes. Optional extras (board.ts): a stop screen with a clock
-//    (default every 40 s for 10 s: "POLESKA 21:37:30" / "131, N") and a bus / tram driving off when a departure leaves.
+//    (default every 40 s for 10 s: "POLESKA 21:37" / "131, N", HH:MM:SS optional) and a bus / tram driving off when a departure leaves.
 //    The GIF is kept under MPK_MAX_BYTES (40 KB) by giving up extras when needed (fitBoard).
 //  - "minutes": live vehicles + timetable ("hybrid"), a static picture ("13   12 min") rewritten whenever the minutes change.
 
@@ -52,12 +52,16 @@ export interface MpkConfig {
   label: string;
   /** a bus / tram drives off its row when a departure leaves */
   anim: boolean;
+  /** how long the departure animation lasts, seconds (0.5-10) */
+  anim_s: number;
 }
 
 interface State {
   key: string; // JSON of the config the GIF was made for
   genAt: number; // epoch seconds
   deps: Dep[];
+  stop?: string; // stop name from the transit API (for re-timing at delivery)
+  lines?: string[]; // lines for the stop screen
 }
 
 export function parseConfig(input: unknown): MpkConfig {
@@ -89,7 +93,13 @@ export function parseConfig(input: unknown): MpkConfig {
   const label = str(o.label);
   // eslint-disable-next-line no-control-regex
   if (label.length > 24 || /[\u0000-\u001f]/.test(label)) throw new RenderError('"label" is limited to 24 printable characters');
-  return { stop, lines, dir, color, mode, info_every, info_for, info_seconds: bool(o.info_seconds, true), label, anim: bool(o.anim, true) };
+  let anim_s = 3;
+  if (o.anim_s !== undefined && o.anim_s !== null && o.anim_s !== "") {
+    anim_s = Number(o.anim_s);
+    if (!Number.isFinite(anim_s) || anim_s < 0.5 || anim_s > 10) throw new RenderError('"anim_s" must be 0.5..10 seconds');
+    anim_s = Math.round(anim_s * 10) / 10;
+  }
+  return { stop, lines, dir, color, mode, info_every, info_for, info_seconds: bool(o.info_seconds, false), label, anim: bool(o.anim, true), anim_s };
 }
 
 /** A stored configuration (older ones lack the newer fields) with the defaults filled in. */
@@ -105,7 +115,8 @@ export function settings(env: Env) {
     frames: Math.min(num(env.MPK_FRAMES, 50), 200), // countdown steps per GIF (50 x 10 s = 500 s)
     step: num(env.MPK_STEP_S, 10), // seconds per countdown step (the countdown resolution)
     refresh: num(env.MPK_REFRESH_S, 300), // a GIF is replaced at the latest after this many seconds
-    lead: num(env.MPK_LEAD_S, 8), // expected seconds between generation and the picture appearing on the panel
+    lead: num(env.MPK_LEAD_S, 8), // expected seconds between generation and the picture appearing on the panel (used until the ESP downloads it)
+    deliveryLead: Number.isFinite(Number(env.MPK_DELIVERY_LEAD_S)) && env.MPK_DELIVERY_LEAD_S ? Number(env.MPK_DELIVERY_LEAD_S) : 7, // may be fractional // seconds between the ESP's download and the picture appearing on the panel (BLE upload + panel switch)
     maxBytes: Math.min(num(env.MPK_MAX_BYTES, 40 * 1024), 60 * 1024), // GIF size budget (the Worker and the ESP accept up to 64 KB)
   };
 }
@@ -138,7 +149,7 @@ async function fetchRaw(env: Env, cfg: MpkConfig, limit: number, source: "schedu
 
 /** Stable identity of a configuration (field order must not matter). */
 export const cfgKey = (c: MpkConfig) =>
-  JSON.stringify([c.stop, c.lines, c.dir, c.color, c.mode, c.info_every, c.info_for, c.info_seconds, c.label, c.anim]);
+  JSON.stringify([c.stop, c.lines, c.dir, c.color, c.mode, c.info_every, c.info_for, c.info_seconds, c.label, c.anim, c.anim_s]);
 
 // ---------------------------------------------------------------- rendering
 /** Two lines of 5x7 text as a static GIF (the "minutes" mode). */
@@ -152,6 +163,7 @@ export function boardOptions(cfg: MpkConfig, step: number, stopName: string, lin
     color: cfg.color,
     step,
     anim: cfg.anim,
+    animMs: cfg.anim_s * 1000,
     info: cfg.info_every > 0 ? { every: cfg.info_every, dur: cfg.info_for, seconds: cfg.info_seconds, label: cfg.label || stopName, lines } : null,
   };
 }
@@ -226,15 +238,43 @@ export async function refreshPanel(
   }
   if (!force && !needsRegen(state, key, deps, nowS, s.refresh)) return { changed: false, regenerated: false, stop, rows: rowsNow };
 
-  // frame 0 = the moment the picture is expected to appear on the panel, aligned to the step so a timetable row counts 3m 10s, 3m 00s, ...
-  const startS = Math.floor((nowS + s.lead) / s.step) * s.step;
-  const horizon = s.frames * s.step;
-  const opt = boardOptions(cfg, s.step, stop, infoLines(cfg, list));
-  const fit = fitBoard(deps, startS, horizon, Math.min(horizon, s.refresh + 60), opt, warsawSecondsOfDay(startS * 1000), s.maxBytes);
+  // frame 0 = the moment the picture is expected to appear on the panel (rebuilt when the ESP downloads it, see retimeForDelivery)
+  const lines = infoLines(cfg, list);
+  const fit = buildGif(cfg, s, deps, stop, lines, nowMs + s.lead * 1000);
   const r = await storeImage(env, row, fit.gif, "image/gif", false, true);
-  await env.DB.prepare("UPDATE panels SET mpk_state = ?1 WHERE id = ?2").bind(JSON.stringify({ key, genAt: nowS, deps }), row.id).run();
+  const st: State = { key, genAt: nowS, deps, stop, lines };
+  await env.DB.prepare("UPDATE panels SET mpk_state = ?1 WHERE id = ?2").bind(JSON.stringify(st), row.id).run();
   const gif = { size: fit.gif.length, frames: fit.frames, seconds: fit.horizonS, dropped: fit.dropped };
   return { changed: r.changed, regenerated: true, stop, rows: rowsNow, gif };
+}
+
+/**
+ * The GIF whose first frame is shown at `showMs` (epoch ms). The timeline is built from the step boundary before it (so the
+ * countdown changes on round seconds: 3m 10s, 3m 00s, ...) and the part before `showMs` is cut off, to 1/100 s.
+ */
+function buildGif(cfg: MpkConfig, s: ReturnType<typeof settings>, deps: Dep[], stop: string, lines: string[], showMs: number) {
+  const horizon = s.frames * s.step;
+  const startS = Math.floor(showMs / 1000 / s.step) * s.step;
+  const skipCs = Math.round((showMs - startS * 1000) / 10);
+  const opt = boardOptions(cfg, s.step, stop, lines);
+  return fitBoard(deps, startS, horizon, Math.min(horizon, s.refresh + 60), opt, warsawSecondsOfDay(startS * 1000), s.maxBytes, skipCs);
+}
+
+/**
+ * Called when the ESP downloads a changed image. The ESP checks only every 30 s when idle, so a GIF made by the cron job
+ * reaches the panel 0-30 s later than planned and the countdown / clock would be that much late. Instead the GIF is rebuilt
+ * from the stored timetable right now, with frame 0 = now + MPK_DELIVERY_LEAD_S (the BLE upload and the panel's switch).
+ * Returns the updated row, or null when the image is not a countdown GIF of the departures job.
+ */
+export async function retimeForDelivery(env: Env, row: PanelRow, nowMs = Date.now()): Promise<PanelRow | null> {
+  if (row.mpk_enabled !== 1 || !row.mpk || !row.mpk_state) return null;
+  const cfg = normalize(JSON.parse(row.mpk));
+  const state = JSON.parse(row.mpk_state) as State;
+  if (cfg.mode !== "seconds" || state.key !== cfgKey(cfg) || state.stop === undefined || !state.lines) return null;
+  const s = settings(env);
+  const fit = buildGif(cfg, s, state.deps, state.stop, state.lines, nowMs + s.deliveryLead * 1000);
+  const r = await storeImage(env, row, fit.gif, "image/gif", false, false);
+  return { ...row, etag: r.etag, size: r.size };
 }
 
 /** Cron entry point: refresh every panel that has the departures job enabled. */

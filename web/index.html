@@ -157,9 +157,18 @@
           <label>Every (s) <input id="m-info-every" type="number" min="10" max="600" step="5" value="40" inputmode="numeric"></label>
           <label>For (s) <input id="m-info-for" type="number" min="1" max="120" step="1" value="10" inputmode="numeric"></label>
           <label>Name on the panel <input id="m-label" maxlength="24" placeholder="stop name" autocomplete="off"></label>
-          <label class="check"><input id="m-info-sec" type="checkbox" checked> Clock with seconds (HH:MM:SS)</label>
+          <label>Clock
+            <select id="m-info-clock">
+              <option value="hm" selected>HH:MM</option>
+              <option value="hms">HH:MM:SS</option>
+            </select>
+          </label>
         </div>
         <label class="check"><input id="m-anim" type="checkbox" checked> Animation when a vehicle leaves (a bus / tram drives off its row)</label>
+        <div id="m-anim-opts" class="row sub">
+          <label>Animation length (s) <input id="m-anim-s" type="number" min="0.5" max="10" step="0.5" value="3" inputmode="decimal"></label>
+        </div>
+        <p class="hint">The stop screen uses the 5x7 capitals. When the name and the clock do not fit one row, the clock moves to the second row, next to the lines.</p>
       </fieldset>
 
       <div id="m-board-box" class="board" hidden>

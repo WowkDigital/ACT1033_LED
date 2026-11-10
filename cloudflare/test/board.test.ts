@@ -1,15 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  ANIM_CS,
   ANIM_FRAMES,
+  animCs,
+  bigWidth,
   boardSegments,
   drawSegments,
   fitBoard,
-  infoLinesRow,
+  infoElements,
   infoOffset,
-  infoTopRow,
-  smallWidth,
   type BoardOptions,
   type Dep,
   type Segment,
@@ -55,11 +54,11 @@ test("timeline: covers the horizon exactly, frames last at most 10 s, clock tick
   assert.ok(segs.every((s) => s.cs >= 1 && s.cs <= 1000));
   // START = :20 in the 40 s cycle with offset 5 -> the stop screen shows 25..35 s after START... and 5..15 s after START
   const shown = at(segs, 6).elements;
-  assert.ok(hasBitmap(shown), "small-font clock (POLESKA does not fit next to a 5x7 clock)");
+  assert.ok(!hasBitmap(shown), "5x7 capitals only");
+  assert.deepEqual(texts(shown), ["POLESKA", "21:37:26"], "POLESKA + HH:MM:SS do not fit one row: the clock moves to the second (no room left for the lines)");
   const clock = (s: number) => JSON.stringify(at(segs, s).elements);
   assert.notEqual(clock(6), clock(7), "the clock changes every second");
   assert.deepEqual(texts(at(segs, 20).elements), ["131", "1m 40s", "N", "3m 40s"], "countdown between the stop screens");
-  assert.ok(texts(shown).includes("131, N"), "lines on the second row");
 });
 
 test("HH:MM clock: a stop screen is a single frame unless the minute changes", () => {
@@ -70,28 +69,38 @@ test("HH:MM clock: a stop screen is a single frame unless the minute changes", (
 test("departure animation: the vehicle drives off its row, the second row keeps counting", () => {
   const segs = boardSegments(deps, START, 500, opt(), SOD);
   const first = at(segs, 120);
-  assert.equal(first.cs, ANIM_CS);
+  const cs = animCs(3000);
+  assert.equal(cs * ANIM_FRAMES, 288, "about 3 s by default");
+  assert.equal(first.cs, cs);
   assert.ok(hasBitmap(first.elements), "sprite");
   assert.deepEqual(texts(first.elements), ["131", "N", "2m 00s"], "the leaving line rides on the sprite; N still counts");
   let t = 120 * 100;
-  for (let k = 0; k < ANIM_FRAMES; k++, t += ANIM_CS) assert.ok(hasBitmap(at(segs, t / 100).elements));
-  assert.deepEqual(texts(at(segs, 122).elements), ["N", "2m 00s", "7", "5m 00s"], "after the animation the next departure moves up");
+  for (let k = 0; k < ANIM_FRAMES; k++, t += cs) assert.ok(hasBitmap(at(segs, t / 100).elements));
+  assert.deepEqual(texts(at(segs, 124).elements), ["N", "2m 00s", "7", "5m 00s"], "after the animation the next departure moves up");
+  const quick = boardSegments(deps, START, 500, opt({ animMs: 1000 }), SOD);
+  assert.equal(at(quick, 120).cs, animCs(1000));
+  assert.ok(!hasBitmap(at(quick, 121.1).elements), "a 1 s animation is over after a second");
   const none = boardSegments(deps, START, 500, opt({ anim: false }), SOD);
   assert.ok(!hasBitmap(at(none, 120).elements));
 });
 
-test("stop screen layout fits 64 px: shrinks the fonts, then cuts the name", () => {
-  const width = (els: Element[]) =>
-    Math.max(...els.map((e) => (e.type === "bitmap" ? (e.x ?? 0) + e.rows[0]!.length : 0)));
-  assert.ok(texts(infoTopRow("Rynek", "21:37", "#fff")).includes("RYNEK"), "short name + HH:MM in the 5x7 font");
-  const long = infoTopRow("Plac Grunwaldzki Politechnika", "21:37:30", "#fff");
-  assert.ok(long.every((e) => e.type === "bitmap"));
-  assert.ok(width(long) <= 64);
-  assert.deepEqual(texts(infoLinesRow(["131", "N"], "#fff")), ["131, N"]);
-  const many = infoLinesRow(["1", "2", "4", "10", "16", "19", "112", "113", "131", "144", "145", "146", "N", "D"], "#fff");
-  assert.ok(width(many) <= 64);
-  assert.ok((many[0] as { rows: string[] }).rows.length === 5, "small font for many lines");
-  assert.ok(smallWidth("21:37:30") < 30);
+test("stop screen: 5x7 capitals; the clock moves to the second row when it does not fit next to the name", () => {
+  const right = (els: Element[], t: string) => {
+    const e = els.find((x) => x.type === "text" && x.text === t) as { x: number; y: number } | undefined;
+    return e ? { end: e.x + bigWidth(t), row: e.y === -2 ? 0 : 1 } : null;
+  };
+  const short = infoElements("Rynek", "21:37", ["131", "N"], "#fff");
+  assert.deepEqual(texts(short), ["RYNEK", "21:37", "131, N"]);
+  assert.deepEqual(right(short, "21:37"), { end: 64, row: 0 }, "short name: clock on the first row, right");
+  const long = infoElements("Poleska", "21:37", ["131", "N"], "#fff");
+  assert.deepEqual(texts(long), ["POLESKA", "21:37", "131, N"]);
+  assert.deepEqual(right(long, "21:37"), { end: 64, row: 1 }, "POLESKA + 21:37 = 70 px: clock to the second row");
+  const cut = infoElements("Plac Grunwaldzki Politechnika", "21:37:30", ["1", "2", "4", "10", "16", "19", "112", "113", "131", "N"], "#fff");
+  const [name, clock, list] = texts(cut);
+  assert.ok(bigWidth(name!) <= 64 && "PLAC GRUNWALDZKI".startsWith(name!), name);
+  assert.equal(clock, "21:37:30");
+  assert.ok(list!.endsWith("+") && bigWidth(list!) + 4 + bigWidth("21:37:30") <= 64, list);
+  assert.ok(!cut.some((e) => e.type === "bitmap"));
 });
 
 test("identical scenes are drawn once; the size budget is honoured by giving extras up", () => {

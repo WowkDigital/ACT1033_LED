@@ -22,6 +22,7 @@ export interface Env {
   MPK_REFRESH_S?: string;
   MPK_LEAD_S?: string;
   MPK_MAX_BYTES?: string;
+  MPK_DELIVERY_LEAD_S?: string;
   /** optional var: seconds of fast polling after an automatic regeneration (so the new GIF reaches the panel quickly) */
   FRESH_WINDOW_S?: string;
 }
@@ -300,9 +301,19 @@ export function pollAfter(env: Env, manualAt: number | null, now = Math.floor(Da
   return idle;
 }
 
-export async function panelImage(request: Request, env: Env, id: string): Promise<Response> {
-  const row = await getPanel(env, id);
-  if (!(await roleFor(env, bearer(request), row))) {
+/**
+ * `onDeliver`: called when the ESP (read token) is about to download a changed image; it may rewrite the image first and
+ * returns the updated row (the departures job uses it to start its countdown at the moment of delivery).
+ */
+export async function panelImage(
+  request: Request,
+  env: Env,
+  id: string,
+  onDeliver?: (row: PanelRow) => Promise<PanelRow | null>,
+): Promise<Response> {
+  let row = await getPanel(env, id);
+  const role = await roleFor(env, bearer(request), row);
+  if (!role) {
     const recent = await env.DB.prepare("SELECT 1 AS x FROM panel_events WHERE panel_id = ?1 AND kind = 'auth_fail' AND at > ?2 LIMIT 1").bind(id, nowS() - 60).first();
     if (!recent) await logEvent(env, id, "auth_fail", { endpoint: "image" });
     throw unauthorized();
@@ -318,6 +329,17 @@ export async function panelImage(request: Request, env: Env, id: string): Promis
   if (request.headers.get("If-None-Match") === row.etag) {
     await recordPoll(env, row, 304, request, poll);
     return new Response(null, { status: 304, headers });
+  }
+  if (role === "read" && onDeliver) {
+    try {
+      const updated = await onDeliver(row);
+      if (updated?.etag) {
+        row = updated;
+        headers.ETag = updated.etag;
+      }
+    } catch (e) {
+      console.error("onDeliver", e instanceof Error ? e.message : e); // the stored image is still good
+    }
   }
 
   const r = await env.DB.prepare("SELECT image FROM panels WHERE id = ?1").bind(id).first<{ image: ArrayBuffer | number[] | null }>();

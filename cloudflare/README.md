@@ -51,7 +51,7 @@ Only a request from a listed origin gets CORS headers, so other websites cannot 
 ## Development
 
 ```bash
-npm test                    # 39 tests, in-memory SQLite stands in for D1
+npm test                    # 40 tests, in-memory SQLite stands in for D1
 npm run check               # tsc --noEmit
 npm run dev                 # wrangler dev (uses wrangler.local.jsonc)
 python tools/gen_font.py    # regenerate src/font.ts after editing python/act1033led/font.py

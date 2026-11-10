@@ -3,11 +3,12 @@
 //
 // The GIF is built as a timeline (all times in 1/100 s, the GIF delay unit), starting at `startS`:
 //  - countdown: two rows "13   3m 10s", one per departure, changing every `step` seconds;
-//  - stop screen (optional): every `every` seconds, for `dur` seconds, "POLESKA 21:37:30" + the lines ("131, N");
-//  - departure animation (optional): when a vehicle leaves, a bus / tram sprite carrying its number drives off its row.
+//  - stop screen (optional): every `every` seconds, for `dur` seconds, "POLESKA 21:37" + the lines ("131, N"), 5x7 capitals;
+//    when the name and the clock do not fit one row, the clock moves to the second row (right), next to the lines;
+//  - departure animation (optional): when a vehicle leaves, a bus / tram sprite carrying its number drives off its row
+//    (`animMs`, default 3 s).
 // Consecutive identical frames are merged, so a still picture costs one frame however long it stays.
 
-import { BASE } from "./font.ts";
 import { encodeGif } from "./encode.ts";
 import { buildAnimation, parseColor, textBitmap, PANEL_H, PANEL_W } from "./render.ts";
 import type { Element, Frame } from "./types.ts";
@@ -43,6 +44,8 @@ export interface BoardOptions {
   step: number;
   info: InfoOptions | null;
   anim: boolean;
+  /** how long the departure animation lasts, ms (default 3000) */
+  animMs?: number;
 }
 
 // ---------------------------------------------------------------- departures helpers
@@ -97,77 +100,6 @@ export function formatRemaining(seconds: number, step = 10): string {
   return m > 0 ? `${m}m ${String(r % 60).padStart(2, "0")}s` : `${r}s`;
 }
 
-// ---------------------------------------------------------------- small 3x5 font (clock / long stop names)
-const SMALL: Record<string, string[]> = {
-  "0": ["###", "#.#", "#.#", "#.#", "###"],
-  "1": [".#.", "##.", ".#.", ".#.", "###"],
-  "2": ["###", "..#", "###", "#..", "###"],
-  "3": ["###", "..#", ".##", "..#", "###"],
-  "4": ["#.#", "#.#", "###", "..#", "..#"],
-  "5": ["###", "#..", "###", "..#", "###"],
-  "6": ["###", "#..", "###", "#.#", "###"],
-  "7": ["###", "..#", "..#", ".#.", ".#."],
-  "8": ["###", "#.#", "###", "#.#", "###"],
-  "9": ["###", "#.#", "###", "..#", "###"],
-  A: [".#.", "#.#", "###", "#.#", "#.#"],
-  B: ["##.", "#.#", "##.", "#.#", "##."],
-  C: [".##", "#..", "#..", "#..", ".##"],
-  D: ["##.", "#.#", "#.#", "#.#", "##."],
-  E: ["###", "#..", "##.", "#..", "###"],
-  F: ["###", "#..", "##.", "#..", "#.."],
-  G: [".##", "#..", "#.#", "#.#", ".##"],
-  H: ["#.#", "#.#", "###", "#.#", "#.#"],
-  I: ["#", "#", "#", "#", "#"],
-  J: ["..#", "..#", "..#", "#.#", ".#."],
-  K: ["#.#", "#.#", "##.", "#.#", "#.#"],
-  L: ["#..", "#..", "#..", "#..", "###"],
-  M: ["#...#", "##.##", "#.#.#", "#...#", "#...#"],
-  N: ["#..#", "##.#", "#.##", "#..#", "#..#"],
-  O: [".#.", "#.#", "#.#", "#.#", ".#."],
-  P: ["##.", "#.#", "##.", "#..", "#.."],
-  Q: [".#.", "#.#", "#.#", "##.", ".##"],
-  R: ["##.", "#.#", "##.", "#.#", "#.#"],
-  S: [".##", "#..", ".#.", "..#", "##."],
-  T: ["###", ".#.", ".#.", ".#.", ".#."],
-  U: ["#.#", "#.#", "#.#", "#.#", "###"],
-  V: ["#.#", "#.#", "#.#", "#.#", ".#."],
-  W: ["#...#", "#...#", "#.#.#", "##.##", "#...#"],
-  X: ["#.#", "#.#", ".#.", "#.#", "#.#"],
-  Y: ["#.#", "#.#", ".#.", ".#.", ".#."],
-  Z: ["###", "..#", ".#.", "#..", "###"],
-  ":": [".", "#", ".", "#", "."],
-  ".": [".", ".", ".", ".", "#"],
-  ",": [".", ".", ".", "#", "#"],
-  "-": ["..", "..", "##", "..", ".."],
-  "+": ["...", ".#.", "###", ".#.", "..."],
-  "/": ["..#", "..#", ".#.", "#..", "#.."],
-  "'": ["#", "#", ".", ".", "."],
-  " ": ["..", "..", "..", "..", ".."],
-  "?": ["###", "..#", ".#.", "...", ".#."],
-};
-
-const smallGlyph = (ch: string) => SMALL[(BASE[ch] ?? ch).toUpperCase()] ?? SMALL["?"]!;
-
-const smallCache = new Map<string, string[]>();
-
-/** Rows of a text in the 3x5 font ('#' = on), 1 px between letters. */
-export function smallRows(text: string): string[] {
-  let rows = smallCache.get(text);
-  if (rows) return rows;
-  if (smallCache.size > 2000) smallCache.clear();
-  smallCache.set(text, (rows = makeSmallRows(text)));
-  return rows;
-}
-
-function makeSmallRows(text: string): string[] {
-  const rows = ["", "", "", "", ""];
-  [...text].forEach((ch, i) => {
-    const g = smallGlyph(ch);
-    for (let r = 0; r < 5; r++) rows[r] += (i ? "." : "") + g[r];
-  });
-  return rows;
-}
-export const smallWidth = (text: string) => (text ? smallRows(text)[0]!.length : 0);
 export const bigWidth = (text: string) => (text ? textBitmap(text, 1).w : 0);
 
 // ---------------------------------------------------------------- vehicle sprites (7 rows, facing left)
@@ -192,9 +124,11 @@ export const SPRITES: Record<"bus" | "tram", string[]> = {
   ],
 };
 
-/** Departure animation: pixels moved per frame and the frame time (1/100 s). 16 frames, 0.8 s. */
-export const ANIM_PX = 4;
-export const ANIM_CS = 5;
+/** Departure animation: the sprite moves 2 px per frame, 32 frames to cross the 64 px; the frame time follows `animMs`. */
+export const ANIM_PX = 2;
+export const ANIM_MS = 3000;
+/** 1/100 s per animation frame for an animation of `ms` (at least 2 cs, the panel handles 1 cs). */
+export const animCs = (ms = ANIM_MS) => Math.max(2, Math.round(ms / 10 / ANIM_FRAMES));
 
 // ---------------------------------------------------------------- scene pieces
 const TOPS = [-2, 7]; // big text box tops: glyph rows land on pixel rows 0-6 and 9-15
@@ -227,49 +161,48 @@ function vehicleRow(els: Element[], i: number, line: string, k: number, color: s
   els.push({ type: "text", text: line || " ", color, x: x + sprite[0]!.length + 2, y: TOPS[i] });
 }
 
-/** Text on one row, big (5x7) or small (3x5, bottom-aligned with the big letters). */
-function put(els: Element[], row: number, text: string, small: boolean, x: number, color: string): void {
-  if (!text) return;
-  if (small) els.push({ type: "bitmap", rows: smallRows(text), x, y: ROW_Y[row]! + 2, color });
-  else els.push({ type: "text", text, color, x, y: TOPS[row] });
+const put = (els: Element[], row: number, text: string, x: number, color: string) => {
+  if (text) els.push({ type: "text", text, color, x, y: TOPS[row] });
+};
+
+/** The longest start of `text` (whole items when `sep` is given) that fits `width` px; "+" marks what was left out. */
+function fitList(items: string[], sep: string, width: number): string {
+  const all = items.join(sep);
+  if (bigWidth(all) <= width) return all;
+  for (let n = items.length - 1; n >= 1; n--) {
+    const t = items.slice(0, n).join(sep) + sep.trimEnd() + "+";
+    if (bigWidth(t) <= width) return t;
+  }
+  return "";
 }
 
-/** First row of the stop screen: the name on the left, the clock on the right; shrinks the fonts (then the name) to fit 64 px. */
-export function infoTopRow(label: string, clock: string, color: string): Element[] {
+function fitText(text: string, width: number): string {
+  let t = text;
+  while (t && bigWidth(t) > width) t = t.slice(0, -1);
+  return t.trimEnd();
+}
+
+/**
+ * The stop screen, all in the 5x7 font and capitals: "NAME  HH:MM" on the first row and the lines on the second; when the name
+ * and the clock do not fit 64 px together, the clock moves to the right of the second row and the lines get the space left of it.
+ */
+export function infoElements(label: string, clock: string, lines: string[], color: string): Element[] {
   const name = label.toUpperCase();
+  const cw = bigWidth(clock);
   const els: Element[] = [];
-  const tries: [boolean, boolean][] = [[false, false], [false, true], [true, true]]; // [name small, clock small]
-  for (const [ns, cs] of tries) {
-    const nw = ns ? smallWidth(name) : bigWidth(name);
-    const cw = cs ? smallWidth(clock) : bigWidth(clock);
-    if (nw + (name ? 3 : 0) + cw <= PANEL_W) {
-      put(els, 0, name, ns, 0, color);
-      put(els, 0, clock, cs, PANEL_W - cw, color);
-      return els;
-    }
+  const gap = 4;
+  if (bigWidth(name) + gap + cw <= PANEL_W) {
+    put(els, 0, name, 0, color);
+    put(els, 0, clock, PANEL_W - cw, color);
+    const list = fitList(lines, ", ", PANEL_W) || fitList(lines, ",", PANEL_W);
+    put(els, 1, list, 0, color);
+    return els;
   }
-  const cw = smallWidth(clock);
-  let cut = name;
-  while (cut && smallWidth(cut) + 3 + cw > PANEL_W) cut = cut.slice(0, -1);
-  put(els, 0, cut.trimEnd(), true, 0, color);
-  put(els, 0, clock, true, PANEL_W - cw, color);
-  return els;
-}
-
-/** Second row of the stop screen: "131, N"; tighter, then smaller, then cut with a "+". */
-export function infoLinesRow(lines: string[], color: string): Element[] {
-  const els: Element[] = [];
-  if (!lines.length) return els;
-  for (const [sep, small] of [[", ", false], [",", false], [", ", true], [",", true]] as [string, boolean][]) {
-    const text = lines.join(sep);
-    if ((small ? smallWidth(text) : bigWidth(text)) <= PANEL_W) {
-      put(els, 1, text, small, 0, color);
-      return els;
-    }
-  }
-  let n = lines.length - 1;
-  while (n > 1 && smallWidth(lines.slice(0, n).join(",") + ",+") > PANEL_W) n--;
-  put(els, 1, lines.slice(0, n).join(",") + ",+", true, 0, color);
+  put(els, 0, fitText(name, PANEL_W), 0, color);
+  put(els, 1, clock, PANEL_W - cw, color);
+  const room = PANEL_W - cw - gap;
+  const list = fitList(lines, ", ", room) || fitList(lines, ",", room);
+  put(els, 1, list, 0, color);
   return els;
 }
 
@@ -328,6 +261,7 @@ export function boardSegments(deps: Dep[], startS: number, horizonS: number, opt
   }
   // a departure animation plays when a vehicle leaves (not during a stop screen)
   const leaving = new Map<number, number>(); // departure time -> frames
+  const aCs = animCs(opt.animMs);
   if (opt.anim)
     for (const d of deps) {
       if (d.t <= startS || d.t >= startS + horizonS || inInfo(d.t) || leaving.has(d.t)) continue;
@@ -335,7 +269,7 @@ export function boardSegments(deps: Dep[], startS: number, horizonS: number, opt
       if (!before.length) continue;
       const n = ANIM_FRAMES;
       leaving.set(d.t, n);
-      for (let k = 0; k <= n; k++) add((d.t - startS) * 100 + k * ANIM_CS);
+      for (let k = 0; k <= n; k++) add((d.t - startS) * 100 + k * aCs);
     }
 
   const stateAt = (cs: number): Element[] => {
@@ -343,10 +277,10 @@ export function boardSegments(deps: Dep[], startS: number, horizonS: number, opt
     const atStep = startS + Math.floor(cs / 100 / step) * step; // the countdown shows the value of the step it is in
     if (info && inInfo(aS)) {
       const clock = hhmmss(sod0 + aS - startS, info.seconds);
-      return [...infoTopRow(info.label, clock, color), ...infoLinesRow(info.lines, color)];
+      return infoElements(info.label, clock, info.lines, color);
     }
     for (const [td, n] of leaving) {
-      const k = Math.floor((cs - (td - startS) * 100) / ANIM_CS); // integer maths: epoch seconds + 0.05 s lose precision
+      const k = Math.floor((cs - (td - startS) * 100) / aCs); // integer maths: epoch seconds + 0.05 s lose precision
       if (k < 0 || k >= n) continue;
       const els: Element[] = [];
       upcoming(deps, td - 0.5).forEach((d, i) => (d.t === td ? vehicleRow(els, i, d.l, k, color) : countdownRow(els, i, d, atStep, step, color)));
@@ -422,11 +356,35 @@ export interface FitResult {
   board: BoardFrames;
 }
 
+/** Drops the first `skipCs` (1/100 s) of a timeline, so a GIF can start between two step boundaries. */
+export function trimSegments(segs: Segment[], skipCs: number): Segment[] {
+  const out: Segment[] = [];
+  let left = Math.max(0, Math.round(skipCs));
+  for (const s of segs) {
+    if (left >= s.cs) {
+      left -= s.cs;
+      continue;
+    }
+    out.push(left ? { elements: s.elements, cs: s.cs - left } : s);
+    left = 0;
+  }
+  return out;
+}
+
 /**
  * Builds the GIF and makes sure it fits `maxBytes`. When it does not, it gives things up in this order:
  * a shorter GIF (down to `minHorizonS`), the departure animation, the seconds of the clock, the stop screen.
  */
-export function fitBoard(deps: Dep[], startS: number, horizonS: number, minHorizonS: number, opt: BoardOptions, sod0: number, maxBytes: number): FitResult {
+export function fitBoard(
+  deps: Dep[],
+  startS: number,
+  horizonS: number,
+  minHorizonS: number,
+  opt: BoardOptions,
+  sod0: number,
+  maxBytes: number,
+  skipCs = 0,
+): FitResult {
   parseColor(opt.color, 0); // validates
   const plans: [number, BoardOptions, string[]][] = [[horizonS, opt, []]];
   const short = Math.min(horizonS, minHorizonS);
@@ -438,7 +396,7 @@ export function fitBoard(deps: Dep[], startS: number, horizonS: number, minHoriz
   if (o.info) plans.push([short, (o = { ...o, info: null }), [...plans.at(-1)![2], "stop screen"]]);
   let res: FitResult | null = null;
   for (const [h, p, d] of plans) {
-    const board = drawSegments(boardSegments(deps, startS, h, p, sod0));
+    const board = drawSegments(trimSegments(boardSegments(deps, startS, h, p, sod0), skipCs));
     const gif = encodeBoard(board);
     res = { gif, frames: board.frames.length, horizonS: h, dropped: d, board };
     if (gif.length <= maxBytes) return res;

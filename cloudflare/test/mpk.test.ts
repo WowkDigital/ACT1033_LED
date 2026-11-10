@@ -51,8 +51,9 @@ const gifDelayCs = (b: Uint8Array) => {
 };
 
 let tok: { write_token: string; read_token: string };
+/** the stored image as the control page sees it (the ESP's read token would re-time a countdown GIF, see the delivery test) */
 const image = async () => {
-  const r = await call("/panel/bus/image", { token: tok.read_token });
+  const r = await call("/panel/bus/image", { token: tok.write_token });
   const body = r.status === 200 ? new Uint8Array(await r.arrayBuffer()) : new Uint8Array();
   return { status: r.status, etag: r.headers.get("etag"), poll: r.headers.get("x-poll-after"), body };
 };
@@ -69,9 +70,10 @@ test("config validation; seconds is the default mode", () => {
     mode: "seconds",
     info_every: 40,
     info_for: 10,
-    info_seconds: true,
+    info_seconds: false,
     label: "",
     anim: true,
+    anim_s: 3,
   });
   const off = parseConfig({ stop: "1", info_every: 0, anim: false, info_seconds: false, label: " Poleska " });
   assert.deepEqual([off.info_every, off.anim, off.info_seconds, off.label], [0, false, false, "Poleska"]);
@@ -80,6 +82,8 @@ test("config validation; seconds is the default mode", () => {
   assert.throws(() => parseConfig({ stop: "1", info_every: 5 }), /info_every/);
   assert.throws(() => parseConfig({ stop: "1", info_for: 2.5 }), /info_for/);
   assert.throws(() => parseConfig({ stop: "1", label: "x".repeat(25) }), /label/);
+  assert.equal(parseConfig({ stop: "1", anim_s: 1.5 }).anim_s, 1.5);
+  assert.throws(() => parseConfig({ stop: "1", anim_s: 20 }), /anim_s/);
   assert.equal(parseConfig({ stop: "1", mode: "minutes" }).mode, "minutes");
   assert.throws(() => parseConfig({}), /stop/);
   assert.throws(() => parseConfig({ stop: "12 020" }), /stop/);
@@ -166,7 +170,8 @@ test("enabling the job (default mode) renders a 500 s countdown with the extras 
   assert.ok(requested.at(-1)!.includes("limit=8") && requested.at(-1)!.includes("mode=schedule"), "the countdown is built from the timetable only");
   const img = await image();
   assert.equal(img.status, 200);
-  assert.equal(gifTotalCs(img.body), 50000, "the GIF covers 500 s");
+  const total = gifTotalCs(img.body);
+  assert.ok(total > 49000 && total <= 50000, "the GIF covers the 500 s from its step boundary, minus the part before it is shown: " + total);
   assert.ok(gifFrames(img.body) > 50, "stop screens with a ticking clock add frames");
   assert.deepEqual(body.gif.dropped, []);
   assert.equal(body.gif.size, img.body.length);
@@ -185,7 +190,7 @@ test("cron replaces the GIF when it is older than the refresh interval", async (
   await tick(Date.now() + 301_000);
   const after = await image();
   assert.notEqual(after.etag, before);
-  assert.equal(gifTotalCs(after.body), 50000);
+  assert.ok(gifTotalCs(after.body) > 49000);
 });
 
 test("poll hint: fast right after a regeneration, idle afterwards", async () => {
@@ -199,8 +204,27 @@ test("extras off: the plain countdown of 50 frames x 10 s", async () => {
   const r = await putMpk({ stop: "12020", lines: "13,23", info_every: 0, anim: false });
   assert.equal(r.status, 200);
   const img = await image();
-  assert.equal(gifFrames(img.body), 50);
-  assert.equal(gifDelayCs(img.body), 1000);
+  assert.ok([50, 51].includes(gifFrames(img.body)), "50 steps of 10 s, the first one cut at the moment the GIF is shown");
+  assert.ok(gifDelayCs(img.body) <= 1000);
+});
+
+test("the ESP's download re-times the countdown: frame 0 = download + MPK_DELIVERY_LEAD_S", async () => {
+  departures = [sched("13", 3), sched("23", 7), sched("134", 12)];
+  await putMpk({ stop: "12020", lines: "13,23", info_every: 0, anim: false }); // plain 10 s frames: the first one is easy to check
+  const stored = await image();
+  const r = await call("/panel/bus/image", { token: tok.read_token, headers: { "If-None-Match": '"old"' } });
+  assert.equal(r.status, 200);
+  const etag = r.headers.get("etag");
+  assert.notEqual(etag, stored.etag, "rebuilt for this moment");
+  assert.equal((await image()).etag, etag, "and stored, so the next check is a 304");
+  const again = await call("/panel/bus/image", { token: tok.read_token, headers: { "If-None-Match": etag! } });
+  assert.equal(again.status, 304);
+  // the first frame is cut so that it ends on a step boundary counted from download + lead
+  const lead = 7;
+  const first = gifDelayCs(new Uint8Array(await (await call("/panel/bus/image", { token: tok.write_token })).arrayBuffer()));
+  const showMs = Date.now() + lead * 1000;
+  const expect = Math.round((10_000 - (showMs % 10_000)) / 10);
+  assert.ok(Math.abs(first - expect) <= 30 || Math.abs(first - expect) >= 970, `first frame ${first} cs, expected about ${expect}`);
 });
 
 test("a tight size budget gives the extras up instead of failing", async () => {

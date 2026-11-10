@@ -23,9 +23,10 @@ export function extrasFromForm() {
   return {
     info_every: $("m-info-on").checked ? n("m-info-every", 40) : 0,
     info_for: n("m-info-for", 10),
-    info_seconds: $("m-info-sec").checked,
+    info_seconds: $("m-info-clock").value === "hms",
     label: $("m-label").value.trim(),
     anim: $("m-anim").checked,
+    anim_s: Math.min(10, Math.max(0.5, Number($("m-anim-s").value) || 3)),
   };
 }
 
@@ -34,9 +35,10 @@ export function extrasToForm(cfg) {
   $("m-info-on").checked = cfg.info_every !== 0;
   $("m-info-every").value = cfg.info_every || 40;
   $("m-info-for").value = cfg.info_for || 10;
-  $("m-info-sec").checked = cfg.info_seconds !== false;
+  $("m-info-clock").value = cfg.info_seconds ? "hms" : "hm";
   $("m-label").value = cfg.label || "";
   $("m-anim").checked = cfg.anim !== false;
+  $("m-anim-s").value = cfg.anim_s || 3;
   syncExtras();
 }
 
@@ -52,6 +54,7 @@ export function syncExtras() {
   const seconds = $("m-mode").value === "seconds";
   $("m-extras").disabled = !seconds;
   $("m-info-opts").hidden = !$("m-info-on").checked;
+  $("m-anim-opts").hidden = !$("m-anim").checked;
 }
 
 function paint(ctx, img, frame) {
@@ -117,6 +120,7 @@ export function drawBoard() {
     color,
     step: STEP,
     anim: ex.anim,
+    animMs: ex.anim_s * 1000,
     info: ex.info_every ? { every: ex.info_every, dur: ex.info_for, seconds: ex.info_seconds, label: ex.label || last.stopName, lines } : null,
   };
   const fit = fitBoard(deps, startS, HORIZON, MIN_HORIZON, opt, warsawSecondsOfDay(startS * 1000), MAX_BYTES);
