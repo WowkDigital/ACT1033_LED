@@ -12,6 +12,7 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <esp_heap_caps.h>
 #include <esp_wifi.h>
 #include <stdarg.h>
 
@@ -86,18 +87,27 @@ static bool connectWifi() {
 
 // ---------------- download ----------------
 // Collects the HTTP body in a heap buffer (4 spare bytes for the random GIF tail).
+// The buffer is allocated once with the exact Content-Length: growing it by doubling asked for a 64 KB block for a ~30 KB GIF,
+// which the fragmented heap (Wi-Fi + TLS + BLE) often cannot give, and the download failed.
 class BufStream : public Stream {
  public:
   uint8_t* buf = nullptr;
   size_t len = 0, cap = 0;
-  bool overflow = false;
+  bool tooBig = false, noMem = false;
+  bool reserve(size_t n) {
+    uint8_t* nb = (uint8_t*)realloc(buf, n + 4);
+    if (!nb) { noMem = true; return false; }
+    buf = nb;
+    cap = n + 4;
+    return true;
+  }
   size_t write(uint8_t b) override { return write(&b, 1); }
   size_t write(const uint8_t* d, size_t n) override {
-    if (len + n > MAX_IMG) { overflow = true; return 0; }
-    if (len + n + 4 > cap) {
-      size_t nc = max(cap * 2, len + n + 4 + 512);
+    if (len + n > MAX_IMG) { tooBig = true; return 0; }
+    if (len + n + 4 > cap) {  // chunked body (no Content-Length): grow in 8 KB steps, never past MAX_IMG
+      size_t nc = min(MAX_IMG + 4, max(cap + 8192, len + n + 4));
       uint8_t* nb = (uint8_t*)realloc(buf, nc);
-      if (!nb) { overflow = true; return 0; }
+      if (!nb) { noMem = true; return 0; }
       buf = nb;
       cap = nc;
     }
@@ -148,14 +158,20 @@ static Fetch download(uint8_t*& img, size_t& n, String& etag) {
   }
   etag = http.header("ETag");
   BufStream bs;
-  http.writeToStream(&bs);  // handles Content-Length and chunked bodies
+  int size = http.getSize();  // Content-Length, -1 when chunked
+  if (size > (int)MAX_IMG) bs.tooBig = true;
+  else if (size > 0) bs.reserve(size);
+  if (!bs.tooBig && !bs.noMem) http.writeToStream(&bs);  // handles Content-Length and chunked bodies
   http.end();
-  if (bs.overflow || bs.len < 8) {
-    plog("err", bs.overflow ? "image larger than %u KB" : "empty response", (unsigned)(MAX_IMG / 1024));
+  if (bs.tooBig || bs.noMem || bs.len < 8) {
+    if (bs.tooBig) plog("err", "image larger than %u KB", (unsigned)(MAX_IMG / 1024));
+    else if (bs.noMem) plog("err", "out of memory for a %d B image (free %u B, largest block %u B)", size, (unsigned)ESP.getFreeHeap(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+    else plog("err", "empty response");
     free(bs.buf);
+    if (bs.noMem) tls.stop();  // frees the TLS buffers, so the retry has more room
     return Fetch::Failed;
   }
-  plog("i", "Downloaded %u B in %u ms", (unsigned)bs.len, (unsigned)(millis() - t0));
+  plog("i", "Downloaded %u B in %u ms (largest free block after %u B)", (unsigned)bs.len, (unsigned)(millis() - t0), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
   img = bs.buf;
   n = bs.len;
   return Fetch::Image;
@@ -188,8 +204,8 @@ static bool cycle() {
 
 // ---------------- serial commands ----------------
 static void printStatus() {
-  Serial.printf("ip=%s rssi=%d heap=%u uptime=%us\nurl=%s\ntoken=%s panel=%s iv=%us\nlast_crc=%s etag=%s\n",
-                WiFi.localIP().toString().c_str(), WiFi.RSSI(), (unsigned)ESP.getFreeHeap(), (unsigned)(millis() / 1000),
+  Serial.printf("ip=%s rssi=%d heap=%u largest=%u uptime=%us\nurl=%s\ntoken=%s panel=%s iv=%us\nlast_crc=%s etag=%s\n",
+                WiFi.localIP().toString().c_str(), WiFi.RSSI(), (unsigned)ESP.getFreeHeap(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT), (unsigned)(millis() / 1000),
                 url.length() ? url.c_str() : "(not set)", token.length() ? "set" : "(not set)",
                 panelAddr.length() ? panelAddr.c_str() : "auto", (unsigned)ivSec,
                 haveLast ? String(lastCrc, HEX).c_str() : "none", lastEtag.length() ? lastEtag.c_str() : "none");
