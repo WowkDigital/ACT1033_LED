@@ -24,6 +24,10 @@ The ESP32 then downloads it at its next check. The **Departures** tab instead se
 - **The link stays open between sends** (one handshake, no new search) and is closed after 2 minutes without sending, or with the *Disconnect* button.
   A link also ends when Android suspends the page (screen off, other app in front); the next send reconnects by itself. The screen is kept on while a transfer runs (Wake Lock).
 
+The **Departures** tab has its own **Send via Bluetooth** button for demos: the page reads the timetable, builds the same countdown GIF as the Worker 
+(stop screen, departure animation) and uploads it. The countdown is timed for the moment the picture appears on the panel (link open + *Bluetooth delay* in Advanced, default 6 s; 
+tune it if the panel runs a few seconds early or late). The GIF covers about 8 minutes, then the panel stays on its last picture until you send again; for a board that stays fresh without a phone use *Start departures* (Worker + ESP32).
+
 The page is a **PWA**: in Chrome use the menu -> *Install app* / *Add to Home screen*. It then opens full screen and the page itself works offline
 (composing and Bluetooth upload; the Worker and the Departures tab still need the internet). `sw.js` caches only same-origin files and never the Worker API
 or the token. Every build gets a new cache name, so updates arrive on the next visit.

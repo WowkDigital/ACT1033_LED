@@ -186,13 +186,16 @@
       </div>
       <details class="adv"><summary>Advanced</summary>
         <label>Stop code (pole used for the timetable) <input id="m-stop" placeholder="12020" autocomplete="off"></label>
+        <label>Bluetooth delay (s) <input id="m-ble-lead" type="number" min="0" max="30" step="0.5" value="6" inputmode="decimal"></label>
         <label>Transit API <input id="m-api" type="url" value="https://wroclaw-transit.wowk-digital.workers.dev" autocomplete="off" spellcheck="false"></label>
       </details>
       <div class="row actions">
         <button id="m-stop-btn" type="button" class="secondary">Stop departures</button>
+        <button id="m-ble" type="button" class="secondary" title="Send the current board to the panel over Bluetooth, no Worker needed (Chrome on Android or desktop)">Send via Bluetooth</button>
         <button id="m-start" type="button" class="primary">Start departures</button>
       </div>
       <p id="m-status" class="status" role="status"></p>
+      <p class="hint">Bluetooth: one-off demo upload. The panel counts down by itself for about 8 minutes, then stays on the last picture until you send again. Start departures (Worker) keeps it fresh without a phone.</p>
     </section>
   </div>
 

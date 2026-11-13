@@ -3,6 +3,7 @@
 // It plays in step with the real clock, like the panel does.
 import { fitBoard, rowElements, sortLines, toDeps, warsawSecondsOfDay } from "../../cloudflare/src/board.ts";
 import { buildAnimation } from "../../cloudflare/src/render.ts";
+import { encodeGif } from "../../cloudflare/src/encode.ts";
 
 // the Worker's defaults (cloudflare/src/mpk.ts settings())
 const STEP = 10;
@@ -87,6 +88,38 @@ export function showBoard(list, stopName) {
 
 const kb = (n) => (n / 1024).toFixed(1) + " KB";
 
+/** The countdown GIF for the last answer, built exactly as the Worker builds it (frame 0 = startS, the first skipCs 1/100 s cut off). */
+function planBoard(startS, skipCs) {
+  const ex = extrasFromForm();
+  const deps = toDeps(last.list, Date.now(), true);
+  const chosen = $("m-lines").value ? $("m-lines").value.split(",") : last.list.map((d) => String(d.line));
+  const lines = [...new Set(chosen.filter(Boolean))].sort(sortLines);
+  const opt = {
+    color: $("m-color").value,
+    step: STEP,
+    anim: ex.anim,
+    animMs: ex.anim_s * 1000,
+    info: ex.info_every ? { every: ex.info_every, dur: ex.info_for, seconds: ex.info_seconds, label: ex.label || last.stopName, lines } : null,
+  };
+  return fitBoard(deps, startS, HORIZON, MIN_HORIZON, opt, warsawSecondsOfDay(startS * 1000), MAX_BYTES, skipCs);
+}
+
+/**
+ * The GIF to upload over Bluetooth, timed so that its first frame is what the clock shows at `showMs` (epoch ms): the moment
+ * the picture is expected to appear on the panel. Returns { bytes, note } or null when there is no departures answer yet.
+ */
+export function boardGifFor(showMs) {
+  if (!last) return null;
+  if ($("m-mode").value !== "seconds") {
+    const rows = last.list.slice(0, 2).map((d) => ({ left: String(d.line), right: d.min + " min" }));
+    const f = buildAnimation({ frames: [{ elements: rowElements(rows, $("m-color").value) }] }, { w: 64, h: 16, bg: 0 }).frames[0];
+    return { bytes: encodeGif([f, f], [1000, 1000], 64, 16, { background: 0, loop: 0, nonce: false }), note: "still picture" };
+  }
+  const startS = Math.floor(showMs / 1000 / STEP) * STEP;
+  const fit = planBoard(startS, Math.round((showMs - startS * 1000) / 10));
+  return { bytes: fit.gif, note: kb(fit.gif.length) + ", " + fit.horizonS + " s long" + (fit.dropped.length ? ", left out: " + fit.dropped.join(", ") : "") };
+}
+
 /** Redraws from the last answer with the current form values (colour, mode, extras). */
 export function drawBoard() {
   stopBoard();
@@ -106,24 +139,12 @@ export function drawBoard() {
     return;
   }
 
-  const ex = extrasFromForm();
   if (extrasError()) {
     $("m-board-note").textContent = "· " + extrasError();
     return;
   }
-  const nowMs = Date.now();
-  const startS = Math.floor(nowMs / 1000 / STEP) * STEP;
-  const deps = toDeps(last.list, nowMs, true);
-  const chosen = $("m-lines").value ? $("m-lines").value.split(",") : last.list.map((d) => String(d.line));
-  const lines = [...new Set(chosen.filter(Boolean))].sort(sortLines);
-  const opt = {
-    color,
-    step: STEP,
-    anim: ex.anim,
-    animMs: ex.anim_s * 1000,
-    info: ex.info_every ? { every: ex.info_every, dur: ex.info_for, seconds: ex.info_seconds, label: ex.label || last.stopName, lines } : null,
-  };
-  const fit = fitBoard(deps, startS, HORIZON, MIN_HORIZON, opt, warsawSecondsOfDay(startS * 1000), MAX_BYTES);
+  const startS = Math.floor(Date.now() / 1000 / STEP) * STEP;
+  const fit = planBoard(startS, 0);
   $("m-board-note").textContent =
     "· GIF " + kb(fit.gif.length) + ", " + fit.frames + " frames, " + fit.horizonS + " s" + (fit.dropped.length ? " · left out to fit " + kb(MAX_BYTES) + ": " + fit.dropped.join(", ") : "");
 

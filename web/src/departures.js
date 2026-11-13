@@ -211,6 +211,12 @@ async function runPreview() {
   }
 }
 
+/** Re-reads the timetable for the current choices (before a Bluetooth upload, so the GIF is built from fresh data). */
+export async function refreshPreview() {
+  clearTimeout(previewTimer);
+  await runPreview();
+}
+
 function drawMap() {
   const sides = group.sides.map((s) => ({ lat: s.lat, lon: s.lon, poles: s.poles.map((p) => ({ code: p.code, type: poleType(p) })) }));
   showMap($("m-map"), {

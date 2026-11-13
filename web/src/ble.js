@@ -147,6 +147,14 @@ async function connect() {
   onState();
 }
 
+/** Opens the link now (chooser on the first use) without sending, so the time a later upload takes is predictable. */
+export async function ensureConnected(log = () => {}) {
+  if (!supported()) throw new Error("This browser has no Web Bluetooth. Use Chrome on Android or desktop.");
+  logFn = log;
+  if (!isConnected()) await connect();
+  armIdle();
+}
+
 /** Sends a finished GIF over the open link (opening it first when needed). `log(text)`, `progress(done, total)` optional.
  *  Returns true when the panel confirmed it. */
 export async function sendGif(gif, { log = () => {}, progress = () => {} } = {}) {

@@ -5,8 +5,8 @@ import { encodeGif } from "../../cloudflare/src/encode.ts";
 import { H, W, lifeFrames } from "./life.js";
 import { PALETTES } from "./blobs.js";
 import { blobFrames } from "./blobs-render.js";
-import { initDepartures, loadStop } from "./departures.js";
-import { extrasError, extrasFromForm, extrasToForm, stopBoard, syncExtras } from "./board-preview.js";
+import { initDepartures, loadStop, refreshPreview } from "./departures.js";
+import { boardGifFor, extrasError, extrasFromForm, extrasToForm, stopBoard, syncExtras } from "./board-preview.js";
 import { api, clearLog, setLogListener } from "./api.js";
 import * as ble from "./ble.js";
 import { buildReport, chipFor, renderDebug, renderError, renderFilters, renderLog } from "./debug.js";
@@ -302,6 +302,32 @@ async function sendBle() {
   }
 }
 
+// Departures board over Bluetooth (demo). The countdown is timed for the moment the picture will appear on the panel:
+// now (after the link is open) + the "Bluetooth delay" (upload time + the ~2 s the panel needs to switch).
+async function mpkBle() {
+  if (extrasError()) return say("m-status", extrasError(), "err");
+  $("m-ble").disabled = true;
+  let wake = null;
+  try {
+    say("m-status", "Reading the timetable…");
+    await refreshPreview();
+    if (!boardGifFor(Date.now())) return say("m-status", "Pick a stop first (and make sure departures match)", "err");
+    say("m-status", "Choose the panel (LED_BLE…) in the Bluetooth dialog…");
+    wake = await navigator.wakeLock?.request("screen").catch(() => null);
+    await ble.ensureConnected();
+    const lead = clamp(Number($("m-ble-lead").value), 0, 30);
+    const built = boardGifFor(Date.now() + lead * 1000); // built only now, so the timing starts from the open link
+    const ok = await ble.sendGif(built.bytes, { progress: (k, n) => say("m-status", "Sending over Bluetooth… " + k + "/" + n) });
+    say("m-status", (ok ? "Sent (" : "Sent, but the panel did not confirm (") + built.note + "). The countdown runs on the panel by itself." + (ok ? " If it is early or late by a few seconds, change the Bluetooth delay in Advanced." : ""), ok ? "ok" : "err");
+  } catch (e) {
+    const msg = e.name === "NotFoundError" ? "No panel chosen" : e.message;
+    say("m-status", msg + (e.name === "NetworkError" ? " (is the ESP32 or a phone app still connected to the panel? only one link at a time)" : ""), "err");
+  } finally {
+    wake?.release().catch(() => {});
+    $("m-ble").disabled = !ble.supported();
+  }
+}
+
 // ---------------------------------------------------------------- departures job (runs in the Worker, see cloudflare/src/mpk.ts)
 function mpkSummary(j) {
   const rows = (j.rows || []).map((r) => r.left + " " + r.right).join(" · ") || "no departures right now";
@@ -363,6 +389,8 @@ initDepartures();
 syncExtras();
 $("m-start").addEventListener("click", mpkStart);
 $("m-stop-btn").addEventListener("click", mpkStop);
+$("m-ble").addEventListener("click", mpkBle);
+$("m-ble").disabled = !ble.supported();
 
 // ---------------------------------------------------------------- wiring
 for (const b of document.querySelectorAll(".tabs button")) {
