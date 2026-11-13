@@ -1,0 +1,15 @@
+{
+  "name": "ACT1033 LED panel",
+  "short_name": "LED panel",
+  "description": "Compose text, animations and GIFs for the 64x16 LED panel and send them over Bluetooth or through your Worker.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#161615",
+  "theme_color": "#0f6e56",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -12,6 +12,22 @@ The ESP32 then downloads it at its next check. The **Departures** tab instead se
 - The renderer is the **same code as the Worker's** (`../cloudflare/src`), bundled by esbuild, so previews match what the Worker would produce.
   Game of Life is verified frame-for-frame against the Python implementation (`npm test`).
 
+## Bluetooth upload and installing as an app (PWA)
+
+**Send via Bluetooth** (Send section) uploads the previewed GIF straight from the browser to the panel with Web Bluetooth - no Worker, token or ESP32 needed
+(`src/ble.js`, a port of `python/act1033led/protocol.py`; frames are tested byte-for-byte against the Python code in `test/ble.test.js`).
+
+- Works in **Chrome / Edge on Android and desktop** over HTTPS (or `localhost`). Safari and every iPhone browser except Bluefy have no Web Bluetooth.
+- The first send opens Chrome's device chooser (only `LED_BLE*` panels are listed). Chrome remembers the permission, so later visits connect without the chooser.
+- The panel allows **one Bluetooth link at a time**: stop the ESP32 bridge (or close any phone app) before sending, otherwise the connection fails.
+- The animation is stored in the panel and keeps playing after the link is closed. GIFs only (PNG files are not supported over Bluetooth).
+- **The link stays open between sends** (one handshake, no new search) and is closed after 2 minutes without sending, or with the *Disconnect* button.
+  A link also ends when Android suspends the page (screen off, other app in front); the next send reconnects by itself. The screen is kept on while a transfer runs (Wake Lock).
+
+The page is a **PWA**: in Chrome use the menu -> *Install app* / *Add to Home screen*. It then opens full screen and the page itself works offline
+(composing and Bluetooth upload; the Worker and the Departures tab still need the internet). `sw.js` caches only same-origin files and never the Worker API
+or the token. Every build gets a new cache name, so updates arrive on the next visit.
+
 ## Sections
 
 The page has four sections: **Send** (live preview + Text / Game of Life / Blobs / file), **Departures**, **Debug** and **Settings**

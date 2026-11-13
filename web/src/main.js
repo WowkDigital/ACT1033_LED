@@ -8,6 +8,7 @@ import { blobFrames } from "./blobs-render.js";
 import { initDepartures, loadStop } from "./departures.js";
 import { extrasError, extrasFromForm, extrasToForm, stopBoard, syncExtras } from "./board-preview.js";
 import { api, clearLog, setLogListener } from "./api.js";
+import * as ble from "./ble.js";
 import { buildReport, chipFor, renderDebug, renderError, renderFilters, renderLog } from "./debug.js";
 
 const MAX = 64 * 1024;
@@ -67,8 +68,15 @@ function connection() {
   if (!token) throw new Error("Enter the token");
   return { base, id, token, url: base + "/panel/" + encodeURIComponent(id), auth: { Authorization: "Bearer " + token } };
 }
+const isGif = (b) => b && b.length > 4 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38;
 function updateSendButton() {
   $("send").disabled = !(current && $("worker").value.trim() && $("panel").value.trim() && $("token").value.trim());
+  $("send-ble").disabled = !(current && ble.supported() && isGif(current.bytes) && !bleBusy);
+  const hint = $("ble-hint");
+  hint.hidden = false;
+  if (!ble.supported()) hint.textContent = "Bluetooth upload needs Chrome (Android or desktop). Safari / iPhone has no Web Bluetooth.";
+  else if (current && !isGif(current.bytes)) hint.textContent = "Bluetooth upload sends GIF files only (this one is a PNG).";
+  else hint.hidden = true;
 }
 
 // ---------------------------------------------------------------- content builders
@@ -270,6 +278,30 @@ async function send() {
   }
 }
 
+// ---------------------------------------------------------------- direct Bluetooth upload (no Worker; see ble.js)
+let bleBusy = false;
+async function sendBle() {
+  bleBusy = true;
+  updateSendButton();
+  say("send-status", "Choose the panel (LED_BLE…) in the Bluetooth dialog…");
+  let wake = null;
+  try {
+    wake = await navigator.wakeLock?.request("screen").catch(() => null); // keep the screen on while sending
+    const ok = await ble.sendGif(current.bytes, {
+      log: (m) => console.debug("[ble]", m),
+      progress: (k, n) => say("send-status", "Sending over Bluetooth… " + k + "/" + n),
+    });
+    say("send-status", ok ? "Sent. The panel switches to the new animation in about 2 s." : "Sent, but the panel did not confirm. Check the picture; if it is wrong, try again.", ok ? "ok" : "err");
+  } catch (e) {
+    const msg = e.name === "NotFoundError" ? "No panel chosen" : e.name === "SecurityError" ? "Bluetooth is blocked for this page" : e.message;
+    say("send-status", msg + (e.name === "NetworkError" ? " (is the ESP32 or a phone app still connected to the panel? only one link at a time)" : ""), "err");
+  } finally {
+    wake?.release().catch(() => {});
+    bleBusy = false;
+    updateSendButton();
+  }
+}
+
 // ---------------------------------------------------------------- departures job (runs in the Worker, see cloudflare/src/mpk.ts)
 function mpkSummary(j) {
   const rows = (j.rows || []).map((r) => r.left + " " + r.right).join(" · ") || "no departures right now";
@@ -463,6 +495,10 @@ for (const id of ["worker", "panel", "token"]) $(id).addEventListener("input", u
 $("remember").addEventListener("change", persist);
 $("connect").addEventListener("click", check);
 $("send").addEventListener("click", send);
+$("send-ble").addEventListener("click", sendBle);
+$("ble-off").addEventListener("click", () => ble.disconnect("by user"));
+ble.setStateListener(() => ($("ble-link").hidden = !ble.isConnected()));
+if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) navigator.serviceWorker.register("sw.js").catch(() => {}); // PWA: installable + offline shell
 $("l-random").addEventListener("click", () => {
   $("l-seed").value = Math.floor(Math.random() * 1e6);
   refresh();
@@ -485,9 +521,9 @@ function showSwatches() {
 $("b-palette").addEventListener("change", showSwatches);
 $("b-palette").selectedIndex = Math.floor(Math.random() * Object.keys(PALETTES).length);
 showSwatches();
-// First run (nothing saved, no link): open Settings. Otherwise the section from the link, else Send.
+// First run (nothing saved, no link, no Web Bluetooth): open Settings. Otherwise the section from the link, else Send.
 {
   const wanted = new URLSearchParams(location.hash.slice(1)).get("view");
-  show(!hasConnection() ? "settings" : wanted || "send", false);
+  show(!hasConnection() && !ble.supported() ? "settings" : wanted || "send", false); // Bluetooth needs no Worker, so Send is usable straight away
   pollChip();
 }

@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ACT1033 LED panel</title>
+<meta name="theme-color" content="#0f6e56">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="leaflet.css">
 <link rel="stylesheet" href="style.css">
 </head>
@@ -32,9 +36,14 @@
         <label class="bright">Brightness <span id="bright-val">100%</span>
           <input id="brightness" type="range" min="5" max="100" value="100">
         </label>
-        <button id="send" type="button" class="primary" disabled>Send to panel</button>
+        <span class="btns">
+          <button id="send-ble" type="button" class="secondary" disabled title="Send straight to the panel over Bluetooth (Chrome on Android or desktop). No Worker needed.">Send via Bluetooth</button>
+          <button id="send" type="button" class="primary" disabled>Send to panel</button>
+        </span>
       </div>
       <p id="send-status" class="status" role="status"></p>
+      <p id="ble-hint" class="hint" hidden></p>
+      <p id="ble-link" class="hint" hidden>Bluetooth link open (closes after 2 min without sending). <button id="ble-off" type="button" class="secondary">Disconnect</button></p>
     </section>
 
     <section class="card">
